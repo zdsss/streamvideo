@@ -914,6 +914,8 @@ class DouyinRecorder(BaseLiveRecorder):
         self.info.platform = "douyin"
         self.info.live_url = f"https://live.douyin.com/{identifier}"
         self._streamer_name = None
+        self._ttwid = ""
+        self._ttwid_time = 0
         # 抖音 CDN 较慢，放宽断流检测
         self.stall_timeout = 30
         self.grace_period = 90
@@ -921,8 +923,98 @@ class DouyinRecorder(BaseLiveRecorder):
     def _get_stream_url(self) -> str:
         return f"https://live.douyin.com/{self.room_id}"
 
+    async def _get_ttwid(self) -> str:
+        """获取抖音 ttwid cookie（缓存 1 小时）"""
+        if self._ttwid and (time.time() - self._ttwid_time) < 3600:
+            return self._ttwid
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://live.douyin.com/",
+                    headers={"User-Agent": self.user_agent},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    allow_redirects=True,
+                ) as resp:
+                    cookies = resp.cookies
+                    ttwid = ""
+                    for cookie in cookies.values():
+                        if cookie.key == "ttwid":
+                            ttwid = cookie.value
+                            break
+                    if not ttwid:
+                        # 从 Set-Cookie header 提取
+                        for h in resp.headers.getall("Set-Cookie", []):
+                            if "ttwid=" in h:
+                                ttwid = h.split("ttwid=")[1].split(";")[0]
+                                break
+                    if ttwid:
+                        self._ttwid = ttwid
+                        self._ttwid_time = time.time()
+                        return ttwid
+        except Exception as e:
+            logger.warning(f"[{self.info.username}] Failed to get ttwid: {e}")
+        return self._ttwid
+
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
-        """用 streamlink 检测抖音直播在线状态"""
+        """用抖音 webcast API 检测直播状态（比 streamlink 更可靠）"""
+        try:
+            ttwid = await self._get_ttwid()
+            url = (
+                f"https://live.douyin.com/webcast/room/web/enter/"
+                f"?aid=6383&app_name=douyin_web&live_id=1"
+                f"&device_platform=web&language=zh-CN"
+                f"&browser_language=zh-CN&browser_platform=MacIntel"
+                f"&browser_name=Chrome&browser_version=120"
+                f"&web_rid={self.room_id}"
+            )
+            headers = {
+                "User-Agent": self.user_agent,
+                "Referer": f"https://live.douyin.com/{self.room_id}",
+                "Accept-Encoding": "gzip, deflate",
+            }
+            cookies = {"ttwid": ttwid} if ttwid else {}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, headers=headers, cookies=cookies,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"[{self.info.username}] Douyin API returned {resp.status}")
+                        return await self._check_status_fallback()
+                    data = await resp.json()
+
+            if data.get("status_code") != 0:
+                logger.warning(f"[{self.info.username}] Douyin API error: {data.get('status_code')}")
+                return await self._check_status_fallback()
+
+            room_data = data.get("data", {})
+            room_status = room_data.get("room_status", 0)
+
+            # 提取主播信息
+            user = room_data.get("user", {})
+            nickname = user.get("nickname", "")
+            if nickname and not self._streamer_name:
+                self._streamer_name = nickname
+                self.info.username = nickname
+                logger.info(f"[{self.info.username}] Douyin streamer: {nickname}")
+                self._save_meta()
+
+            # 提取头像
+            avatar = user.get("avatar_thumb", {}).get("url_list", [])
+            if avatar and not self.info.thumbnail_url:
+                self.info.thumbnail_url = avatar[0]
+
+            if room_status == 1:
+                return ModelStatus.PUBLIC, int(self.room_id), 0
+            return ModelStatus.OFFLINE, int(self.room_id), 0
+
+        except Exception as e:
+            logger.warning(f"[{self.info.username}] Douyin API check error: {e}")
+            return await self._check_status_fallback()
+
+    async def _check_status_fallback(self) -> tuple[ModelStatus, Optional[int], int]:
+        """Fallback: 用 streamlink 检测"""
         try:
             proc = await asyncio.create_subprocess_exec(
                 "streamlink", "--json", self._get_stream_url(),
@@ -930,22 +1022,15 @@ class DouyinRecorder(BaseLiveRecorder):
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
             data = json.loads(stdout.decode())
-
             if data.get("streams"):
-                # 提取主播名
-                title = data.get("metadata", {}).get("title", "")
                 author = data.get("metadata", {}).get("author", "")
                 if author and not self._streamer_name:
                     self._streamer_name = author
                     self.info.username = author
-                    logger.info(f"[{self.info.username}] Douyin streamer: {author}")
                     self._save_meta()
                 return ModelStatus.PUBLIC, int(self.room_id), 0
             return ModelStatus.OFFLINE, int(self.room_id), 0
-        except asyncio.TimeoutError:
-            return ModelStatus.UNKNOWN, None, 0
-        except Exception as e:
-            logger.warning(f"[{self.info.username}] Douyin check error: {e}")
+        except Exception:
             return ModelStatus.UNKNOWN, None, 0
 
     async def _do_record(self, output_path: str) -> bool:
