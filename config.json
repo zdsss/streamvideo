@@ -1,0 +1,16 @@
+{
+  "models": [
+    {
+      "url": "https://live.douyin.com/55948918950",
+      "name": "鲁大魔"
+    }
+  ],
+  "auto_merge": true,
+  "merge_gap_minutes": 15,
+  "auto_delete_originals": true,
+  "min_segment_size_kb": 500,
+  "smart_rename": true,
+  "h265_transcode": false,
+  "cloud_upload": {},
+  "webhooks": []
+}

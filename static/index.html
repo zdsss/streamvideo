@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html class="dark" lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>The Orchestrator | StreamVideo</title>
+<link href="/static/styles.css" rel="stylesheet"/>
+<link rel="manifest" href="/static/manifest.json"/>
+<meta name="theme-color" content="#6c5ce7"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<!-- Icons: self-hosted inline SVG (zero external dependency) -->
+<script>
+const _IC = {
+  sensors:'M7.76 16.24C6.67 15.16 6 13.66 6 12s.67-3.16 1.76-4.24l1.42 1.42C8.45 9.9 8 10.9 8 12c0 1.1.45 2.1 1.17 2.83l-1.41 1.41zm8.48 0l-1.42-1.42C15.55 14.1 16 13.1 16 12c0-1.1-.45-2.1-1.17-2.83l1.41-1.41C17.33 8.84 18 10.34 18 12s-.67 3.16-1.76 4.24zM12 10a2 2 0 100 4 2 2 0 000-4zm-7.07 7.07l-1.41 1.41C1.34 16.31 0 14.28 0 12s1.34-4.31 3.52-6.48l1.41 1.41C3.12 8.74 2 10.28 2 12s1.12 3.26 2.93 5.07zm18.14 0C21.88 15.26 22 13.72 22 12s-.12-3.26-1.93-5.07l-1.41 1.41C20.66 10.34 21 11.12 21 12s-.34 1.66-1.34 2.66l1.41 1.41zM12 10a2 2 0 100 4 2 2 0 000-4z',
+  hard_drive:'M20 13H4v-2h16v2zm0 4H4v-2h16v2zM4 7h16v2H4V7zm16-4H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z',
+  lan:'M10 2v2H6v4H2v12h8v-4h4v4h8V8h-4V4h-4V2h-4zm0 4h4v4h4v8h-4v-4H10v4H6V10h4V6z',
+  terminal:'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zm-8-2h6v-2h-6v2zM7.5 17l1.41-1.41L6.33 13l2.58-2.59L7.5 9l-4 4 4 4z',
+  settings:'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.611 3.611 0 0112 15.6z',
+  add_link:'M8 11h8v2H8v-2zm12.1 1H22c0-2.76-2.24-5-5-5h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1zM3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM19 12h-2v3h-3v2h3v3h2v-3h3v-2h-3v-3z',
+  add:'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z',
+  progress_activity:'M12 4V2A10 10 0 002 12h2a8 8 0 018-8z',
+  bolt:'M11 21h-1l1-7H7.5c-.88 0-.33-.75-.31-.78C8.48 10.94 10.42 7.54 13.01 3h1l-1 7h3.51c.4 0 .62.19.4.66C12.97 17.55 11 21 11 21z',
+  stop:'M6 6h12v12H6z',
+  play_arrow:'M8 5v14l11-7z',
+  folder:'M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z',
+  close:'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
+  person:'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
+  wifi:'M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3a4.237 4.237 0 00-6 0zm-4-4l2 2a7.074 7.074 0 0110 0l2-2C15.14 9.14 8.87 9.14 5 13z',
+  vpn_key:'M12.65 10A5.99 5.99 0 007 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 005.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z',
+  info:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z',
+  speed:'M20.38 8.57l-1.23 1.85a8 8 0 01-.22 7.58H5.07A8 8 0 0115.58 6.85l1.85-1.23A10 10 0 003.35 19a2 2 0 001.72 1h13.85a2 2 0 001.74-1 10 10 0 00-.27-10.44zm-9.79 6.84a2 2 0 002.83 0l5.66-8.49-8.49 5.66a2 2 0 000 2.83z',
+  receipt_long:'M19.5 3.5L18 2l-1.5 1.5L15 2l-1.5 1.5L12 2l-1.5 1.5L9 2 7.5 3.5 6 2 4.5 3.5 3 2v20l1.5-1.5L6 22l1.5-1.5L9 22l1.5-1.5L12 22l1.5-1.5L15 22l1.5-1.5L18 22l1.5-1.5L21 22V2l-1.5 1.5zM19 19.09H5V4.91h14v14.18zM6 15h12v2H6zm0-4h12v2H6zm0-4h12v2H6z',
+  refresh:'M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z',
+  account_circle:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2a7.2 7.2 0 01-6-3.22c.03-1.99 4-3.08 6-3.08 2 0 5.97 1.09 6 3.08a7.2 7.2 0 01-6 3.22z',
+  search:'M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z',
+  movie:'M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z',
+  download:'M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z',
+  delete:'M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z',
+  edit:'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 000-1.41l-2.34-2.34a.996.996 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z',
+  video_file:'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zm-3 4l2.5 3.5L15 12l3 4H6l2.5-3.5L10 13z',
+  storage:'M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z',
+  settings_input_component:'M5 2c0-.55-.45-1-1-1s-1 .45-1 1v4H1v6h6V6H5V2zm4 14c0 1.3.84 2.4 2 2.82V22h2v-3.18c1.16-.42 2-1.52 2-2.82v-2H9v2zm-8 0c0 1.3.84 2.4 2 2.82V22h2v-3.18C6.16 18.4 7 17.3 7 16v-2H1v2zm16-8V2c0-.55-.45-1-1-1s-1 .45-1 1v4h-2v6h6V6h-2zm-4 8c0 1.3.84 2.4 2 2.82V22h2v-3.18c1.16-.42 2-1.52 2-2.82v-2h-6v2zm-4-8V2c0-.55-.45-1-1-1s-1 .45-1 1v4H9v6h6V6h-2z',
+  check_circle:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z',
+  fiber_manual_record:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z',
+  schedule:'M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z',
+  visibility:'M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z',
+};
+function _ri(root){
+  (root||document).querySelectorAll('.material-symbols-outlined').forEach(el=>{
+    if(el._rendered) return;
+    const n=el.textContent.trim();
+    if(_IC[n]){
+      const s=document.createElementNS('http://www.w3.org/2000/svg','svg');
+      s.setAttribute('viewBox','0 0 24 24');
+      s.setAttribute('fill','currentColor');
+      s.style.cssText='width:1em;height:1em;display:inline-block;vertical-align:middle;';
+      s.innerHTML='<path d="'+_IC[n]+'"/>';
+      el.textContent='';
+      el.appendChild(s);
+      el._rendered=true;
+    }
+  });
+}
+// 延迟执行 + 定时扫描，确保 Alpine.js 动态渲染的元素也能被处理
+document.addEventListener('DOMContentLoaded',()=>{
+  setTimeout(()=>_ri(), 100);
+  setTimeout(()=>_ri(), 500);
+  setTimeout(()=>_ri(), 1500);
+  new MutationObserver(()=>{ requestAnimationFrame(()=>_ri()); }).observe(document.body,{childList:true,subtree:true});
+  setInterval(()=>_ri(), 3000);
+});
+</script>
+<style>
+.material-symbols-outlined { display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
+.mso-fill svg { fill: currentColor; }
+[x-cloak] { display: none !important; }
+.pulse-red { animation: pulse-red 2s infinite; }
+@keyframes pulse-red {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255,180,171,0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(255,180,171,0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255,180,171,0); }
+}
+.recording-pulse { border: 2px solid #ffb4ab; animation: red-glow 2s ease-in-out infinite; }
+@keyframes red-glow {
+  0%,100% { box-shadow: 0 0 5px rgba(255,180,171,0.4); border-color: rgba(255,180,171,0.6); }
+  50% { box-shadow: 0 0 20px rgba(255,180,171,0.8); border-color: rgba(255,180,171,1); }
+}
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.anim-spin { animation: spin 0.8s linear infinite; }
+</style>
+</head>
+<body class="bg-surface-dim text-on-surface font-body selection:bg-primary-container selection:text-on-primary-container"
+  x-data="app()" x-init="init()" @keydown.window="handleKey($event)"
+  @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false"
+  @drop.prevent="handleDrop($event)">
+
+<!-- ===== TOP NAV ===== -->
+<nav class="fixed top-0 w-full z-50 flex justify-between items-center px-4 h-14 bg-surface border-b border-outline-variant/15 tracking-tight">
+  <div class="flex items-center gap-4">
+    <span class="text-lg font-black tracking-tighter uppercase ml-14 md:ml-0">The Orchestrator</span>
+  </div>
+  <div class="flex items-center gap-3">
+    <div class="hidden md:flex items-center gap-2.5 px-3 py-1 bg-surface-container rounded-full text-[11px] font-medium border border-outline-variant/10">
+      <div class="flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full" :class="wsConnected?'bg-[#00b894]':'bg-error'"></span>
+        <span class="text-on-surface-variant" x-text="wsConnected?'Connected':'Offline'"></span>
+      </div>
+      <template x-if="recordingCount > 0">
+        <div class="flex items-center gap-1.5">
+          <div class="h-3 w-px bg-outline-variant/30"></div>
+          <span class="w-1.5 h-1.5 rounded-full bg-error pulse-red"></span>
+          <span class="text-error" x-text="recordingCount + ' REC'"></span>
+        </div>
+      </template>
+      <div class="h-3 w-px bg-outline-variant/30"></div>
+      <span class="text-on-surface-variant" x-text="onlineCount + '/' + models.length"></span>
+      <template x-if="diskInfo.recordings_bytes">
+        <span class="text-on-surface-variant" x-text="fmtSize(diskInfo.recordings_bytes)"></span>
+      </template>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <button class="px-3 py-1 bg-gradient-to-br from-primary-container to-primary text-on-primary-container text-[11px] font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="startAll()">全部启动</button>
+      <button class="px-3 py-1 bg-surface-container-highest text-on-surface text-[11px] font-bold rounded border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all" @click="stopAll()">全部停止</button>
+      <span class="material-symbols-outlined cursor-pointer hover:bg-surface-container-highest p-1.5 rounded-full transition-all text-on-surface-variant text-xl" @click="showSettings=true">settings</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ===== SIDE NAV (Icon Only, 56px) ===== -->
+<aside class="hidden md:flex fixed left-0 top-14 h-[calc(100vh-3.5rem)] w-14 flex-col items-center py-3 bg-surface-container border-r border-outline-variant/15 z-40 gap-1">
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='streams'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='streams'">
+    <span class="material-symbols-outlined text-xl">sensors</span>
+    <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Streams</span>
+  </button>
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='storage'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='storage'; fetchDisk()">
+    <span class="material-symbols-outlined text-xl">hard_drive</span>
+    <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Storage</span>
+  </button>
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='network'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='network'; fetchNetwork()">
+    <span class="material-symbols-outlined text-xl">lan</span>
+    <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Network</span>
+  </button>
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='system'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='system'; fetchSystem(); loadLogs()">
+    <span class="material-symbols-outlined text-xl">terminal</span>
+    <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">System</span>
+  </button>
+  <div class="flex-1"></div>
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" @click="showSettings=true">
+    <span class="material-symbols-outlined text-xl">settings</span>
+    <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">设置</span>
+  </button>
+</aside>
+
+<!-- ===== DRAG OVERLAY ===== -->
+<div x-show="dragOver" x-cloak class="fixed inset-0 z-[999] bg-primary-container/10 border-2 border-dashed border-primary flex items-center justify-center pointer-events-none">
+  <span class="text-lg text-primary font-bold">松开添加直播 URL</span>
+</div>
+
+<!-- ===== MAIN CONTENT ===== -->
+<main class="md:pl-14 pt-14 min-h-screen">
+<div class="p-4 lg:p-6">
+
+<!-- ========== PAGE: STREAMS ========== -->
+<div x-show="currentPage==='streams'">
+<!-- Toolbar -->
+<div class="mb-4 flex gap-3">
+  <div class="relative flex-1">
+    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-lg">add_link</span>
+    <input class="add-input w-full bg-surface-container-high border-none rounded-lg pl-10 pr-4 py-2.5 text-on-surface placeholder:text-on-surface-variant/50 text-sm focus:ring-1 focus:ring-primary transition-all"
+      placeholder="粘贴直播 URL 或输入用户名..." type="text" x-model="newModel" @keydown.enter="addModel()" :disabled="addingModel"/>
+  </div>
+  <button class="bg-gradient-to-br from-primary-container to-primary px-5 rounded-lg flex items-center gap-2 font-bold text-sm text-on-primary-container shadow-lg shadow-primary-container/20 hover:scale-[1.02] active:scale-95 transition-all shrink-0"
+    @click="addModel()" :disabled="addingModel">
+    <span x-show="addingModel" class="material-symbols-outlined anim-spin text-base">progress_activity</span>
+    <span x-show="!addingModel" class="material-symbols-outlined text-base">add</span>
+    添加
+  </button>
+</div>
+
+<!-- Empty State -->
+<template x-if="models.length === 0">
+  <div class="text-center py-24 text-on-surface-variant">
+    <span class="material-symbols-outlined text-6xl opacity-20 mb-4">sensors</span>
+    <p class="text-lg font-medium mb-2">暂无监控主播</p>
+    <p class="text-sm opacity-60">支持平台：抖音 · B站 · Twitch · YouTube · Stripchat<br/>粘贴直播 URL 即可开始录制</p>
+  </div>
+</template>
+
+<!-- Card Grid (Compact Horizontal) -->
+<div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+  <template x-for="m in sortedModels" :key="m.username">
+    <div class="bg-surface-container rounded-xl overflow-hidden flex flex-row group transition-all"
+      :class="{
+        'recording-pulse': m.state==='recording',
+        'border border-[#00b894]/20 hover:border-[#00b894]/40': m.status==='public' && m.state!=='recording',
+        'border border-outline-variant/15 opacity-75 hover:opacity-100': m.status!=='public' && m.state!=='recording'
+      }">
+      <!-- Thumbnail (left, 120px, 4:3) -->
+      <div class="relative w-[120px] shrink-0 aspect-[4/3] cursor-pointer" @click="openRecordings(m.username)">
+        <template x-if="m.thumbnail_url">
+          <img class="w-full h-full object-cover" :src="m.thumbnail_url + '?t=' + thumbTs" @error="$el.style.display='none'" @load="$el.style.display=''"/>
+        </template>
+        <template x-if="!m.thumbnail_url">
+          <div class="w-full h-full flex items-center justify-center text-sm font-bold text-white/70" :style="'background:' + nameColor(m.username)" x-text="m.username.slice(0,4)"></div>
+        </template>
+        <template x-if="m.state==='recording'">
+          <span class="absolute top-1.5 left-1.5 bg-error text-on-error px-1.5 py-px rounded text-[9px] font-bold tracking-wider uppercase flex items-center gap-1">
+            <span class="w-1 h-1 rounded-full bg-white animate-pulse"></span>REC
+          </span>
+        </template>
+        <template x-if="m.state==='recording' && m.current_recording">
+          <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1">
+            <span class="text-[10px] font-mono text-white/90" x-text="fmtDur(Math.floor(Date.now()/1000 - m.current_recording.start_time))"></span>
+          </div>
+        </template>
+      </div>
+      <!-- Info (right) -->
+      <div class="flex-1 min-w-0 p-3 flex flex-col justify-between">
+        <!-- Row 1: Name + Status + Auto-merge -->
+        <div class="flex items-center gap-2 mb-1">
+          <a :href="m.live_url || '#'" target="_blank" class="text-sm font-bold truncate text-on-surface hover:text-primary transition-colors" x-text="m.username"></a>
+          <template x-if="m.state==='recording'">
+            <span class="shrink-0 bg-error/15 text-error px-1.5 py-px rounded text-[9px] font-bold uppercase">录制中</span>
+          </template>
+          <template x-if="m.state==='reconnecting'">
+            <span class="shrink-0 bg-tertiary/15 text-tertiary px-1.5 py-px rounded text-[9px] font-bold uppercase">重连中</span>
+          </template>
+          <template x-if="m.status==='public' && m.state!=='recording' && m.state!=='reconnecting'">
+            <span class="shrink-0 bg-[#00b894]/15 text-[#00b894] px-1.5 py-px rounded text-[9px] font-bold uppercase">在线</span>
+          </template>
+          <div class="ml-auto flex items-center gap-1 shrink-0">
+            <span class="cursor-pointer opacity-50 hover:opacity-100 transition-opacity"
+              @click.stop="openSchedule(m.username)"
+              :title="m.schedule?.enabled ? '定时: '+m.schedule.start+'-'+m.schedule.end : '定时录制'">
+              <span class="material-symbols-outlined text-base" :class="m.schedule?.enabled?'text-tertiary':'text-on-surface-variant'">schedule</span>
+            </span>
+            <span class="cursor-pointer opacity-50 hover:opacity-100 transition-opacity"
+              @click.stop="toggleModelAutoMerge(m.username, m.auto_merge!==false)"
+              :title="m.auto_merge!==false ? '自动合并: 开' : '自动合并: 关'">
+              <span class="material-symbols-outlined text-base" :class="m.auto_merge!==false?'text-primary':'text-on-surface-variant'">bolt</span>
+            </span>
+          </div>
+        </div>
+        <!-- Row 2: Platform + Viewers + Stats -->
+        <div class="flex items-center gap-2 text-[11px] text-on-surface-variant mb-1.5">
+          <span class="font-medium" :style="({douyin:'color:#fe2c55',bilibili:'color:#00aeec',twitch:'color:#9146ff',youtube:'color:#ff0000',stripchat:'color:#6c5ce7'})[m.platform]||''"
+            x-text="({douyin:'抖音',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',stripchat:'Stripchat'})[m.platform]||m.platform"></span>
+          <template x-if="m.quality && m.quality !== 'best'">
+            <span class="text-primary font-bold" x-text="m.quality"></span>
+          </template>
+          <template x-if="m.viewers > 0">
+            <span x-text="m.viewers.toLocaleString() + ' 观众'"></span>
+          </template>
+          <template x-if="m.current_recording">
+            <span class="text-on-surface" x-text="fmtSize(m.current_recording.file_size)"></span>
+          </template>
+          <template x-if="m.current_recording && m.current_recording.bandwidth_kbps">
+            <span class="text-on-surface" x-text="m.current_recording.bandwidth_kbps.toFixed(0)+' kbps'"></span>
+          </template>
+          <template x-if="!m.current_recording && m.recording_count > 0">
+            <span x-text="m.recording_count + ' 个文件'"></span>
+          </template>
+          <template x-if="!m.current_recording && m.last_check > 0">
+            <span x-text="ago(m.last_check)"></span>
+          </template>
+        </div>
+        <!-- Row 3: Error -->
+        <div x-show="m.error_msg" class="text-[10px] text-error truncate mb-1" x-text="m.error_msg"></div>
+        <!-- Row 4: Actions -->
+        <div class="flex items-center gap-1.5">
+          <template x-if="m.state==='recording'">
+            <button class="px-2.5 py-1 bg-error-container/30 text-error rounded text-[11px] font-bold hover:bg-error hover:text-on-error transition-all flex items-center gap-1" @click="stopModel(m.username)">
+              <span class="material-symbols-outlined text-xs">stop</span>停止
+            </button>
+          </template>
+          <template x-if="m.state==='idle'">
+            <button class="px-2.5 py-1 bg-primary-container/30 text-primary rounded text-[11px] font-bold hover:bg-primary-container hover:text-on-primary-container transition-all flex items-center gap-1" @click="startModel(m.username)">
+              <span class="material-symbols-outlined text-xs">play_arrow</span>启动
+            </button>
+          </template>
+          <template x-if="m.state!=='recording' && m.state!=='idle'">
+            <button class="px-2.5 py-1 bg-surface-container-highest text-on-surface-variant rounded text-[11px] font-bold hover:text-on-surface transition-all flex items-center gap-1" @click="stopModel(m.username)">
+              <span class="material-symbols-outlined text-xs">stop</span>停止
+            </button>
+          </template>
+          <button class="p-1 bg-surface-container-highest rounded text-on-surface-variant hover:text-on-surface transition-all" @click="openRecordings(m.username)" title="文件">
+            <span class="material-symbols-outlined text-base">folder</span>
+          </button>
+          <button class="p-1 bg-surface-container-highest rounded text-on-surface-variant hover:text-error transition-all" @click="removeModel(m.username)" title="删除">
+            <span class="material-symbols-outlined text-base">close</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+</div>
+
+<!-- ========== PAGE: STORAGE ========== -->
+<div x-show="currentPage==='storage'" x-cloak x-init="$watch('currentPage', v => { if(v==='storage') fetchStorageBreakdown() })">
+<!-- Storage Overview -->
+<h2 class="text-2xl font-black tracking-tight mb-6">Storage</h2>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+  <div class="bg-surface-container p-5 rounded-xl border border-outline-variant/10">
+    <p class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1">磁盘总容量</p>
+    <p class="text-2xl font-black" x-text="fmtSize(diskInfo.total_bytes)"></p>
+  </div>
+  <div class="bg-surface-container p-5 rounded-xl border border-outline-variant/10">
+    <p class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1">录制文件</p>
+    <p class="text-2xl font-black text-primary" x-text="fmtSize(diskInfo.recordings_bytes)"></p>
+  </div>
+  <div class="bg-surface-container p-5 rounded-xl border border-outline-variant/10">
+    <p class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1">剩余空间</p>
+    <p class="text-2xl font-black" :class="diskInfo.free_bytes < 1024*1024*1024 ? 'text-error' : 'text-[#00b894]'" x-text="fmtSize(diskInfo.free_bytes)"></p>
+  </div>
+</div>
+<div class="bg-surface-container p-5 rounded-xl border border-outline-variant/10 mb-6">
+  <div class="flex justify-between items-center mb-2">
+    <span class="text-sm font-bold">磁盘使用率</span>
+    <span class="text-xs font-mono text-on-surface-variant" x-text="diskInfo.total_bytes ? Math.round(diskInfo.recordings_bytes/diskInfo.total_bytes*100)+'%' : '-'"></span>
+  </div>
+  <div class="h-2.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
+    <div class="h-full bg-gradient-to-r from-primary-container to-primary rounded-full transition-all" :style="'width:'+Math.min(diskInfo.total_bytes?diskInfo.recordings_bytes/diskInfo.total_bytes*100:0,100)+'%'"></div>
+  </div>
+</div>
+<!-- Per-streamer breakdown -->
+<div class="bg-surface-container rounded-xl border border-outline-variant/10 mb-6">
+  <div class="px-5 py-3 border-b border-outline-variant/10 flex items-center justify-between">
+    <h3 class="text-sm font-bold">按主播存储占用</h3>
+    <button class="text-xs text-primary font-medium hover:underline" @click="fetchStorageBreakdown()">刷新</button>
+  </div>
+  <template x-if="storageBreakdown.length === 0">
+    <p class="px-5 py-8 text-center text-on-surface-variant text-sm">暂无录制数据</p>
+  </template>
+  <div class="divide-y divide-outline-variant/5">
+    <template x-for="item in storageBreakdown" :key="item.username">
+      <div class="px-5 py-3 hover:bg-surface-container-high/50 transition-colors">
+        <div class="flex items-center justify-between mb-1.5">
+          <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-on-surface-variant text-base">person</span>
+            <span class="text-sm font-medium" x-text="item.username"></span>
+            <span class="text-[10px] text-on-surface-variant" x-text="item.file_count + ' 个文件'"></span>
+          </div>
+          <span class="text-sm font-bold" x-text="fmtSize(item.total_size)"></span>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="flex-1 h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
+            <div class="h-full bg-primary rounded-full" :style="'width:'+Math.min(diskInfo.recordings_bytes?item.total_size/diskInfo.recordings_bytes*100:0,100)+'%'"></div>
+          </div>
+          <div class="flex gap-2 text-[10px] text-on-surface-variant shrink-0">
+            <span x-show="item.merged_count" class="text-[#00b894]" x-text="item.merged_count + ' 已合并'"></span>
+            <span x-show="item.unmerged_count" x-text="item.unmerged_count + ' 未合并'"></span>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+<!-- Cleanup suggestions -->
+<div class="bg-surface-container rounded-xl border border-outline-variant/10">
+  <div class="px-5 py-3 border-b border-outline-variant/10">
+    <h3 class="text-sm font-bold">清理建议</h3>
+  </div>
+  <div class="p-5 space-y-3">
+    <template x-for="item in storageBreakdown.filter(i => i.unmerged_count > 0 && i.merged_count > 0)" :key="'cleanup-'+item.username">
+      <div class="flex items-center justify-between text-sm">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-tertiary text-base">warning</span>
+          <span><span class="font-medium" x-text="item.username"></span> 有 <span class="text-tertiary font-bold" x-text="item.unmerged_count"></span> 个未合并片段</span>
+        </div>
+        <button class="text-xs text-primary font-medium hover:underline" @click="currentPage='streams'; $nextTick(()=>openRecordings(item.username))">查看</button>
+      </div>
+    </template>
+    <template x-for="item in storageBreakdown.filter(i => i.oldest_file > 0 && (Date.now()/1000 - i.oldest_file) > 30*86400)" :key="'old-'+item.username">
+      <div class="flex items-center justify-between text-sm">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-on-surface-variant text-base">history</span>
+          <span><span class="font-medium" x-text="item.username"></span> 有超过 30 天的旧文件</span>
+        </div>
+        <button class="text-xs text-primary font-medium hover:underline" @click="currentPage='streams'; $nextTick(()=>openRecordings(item.username))">查看</button>
+      </div>
+    </template>
+    <p class="text-xs text-on-surface-variant" x-show="storageBreakdown.filter(i=>(i.unmerged_count>0&&i.merged_count>0)||(i.oldest_file>0&&(Date.now()/1000-i.oldest_file)>30*86400)).length===0">暂无清理建议</p>
+  </div>
+</div>
+</div>
+
+<!-- ========== PAGE: NETWORK ========== -->
+<div x-show="currentPage==='network'" x-cloak>
+<!-- Network -->
+<h2 class="text-2xl font-black tracking-tight mb-6">Network</h2>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+  <div class="bg-surface-container p-6 rounded-xl border border-outline-variant/10">
+    <div class="flex items-center gap-3 mb-4">
+      <span class="material-symbols-outlined text-primary">wifi</span>
+      <h3 class="text-sm font-bold">WebSocket 连接</h3>
+    </div>
+    <div class="flex items-center gap-2 mb-2">
+      <span class="w-2.5 h-2.5 rounded-full" :class="wsConnected?'bg-[#00b894]':'bg-error'"></span>
+      <span class="text-sm font-medium" x-text="wsConnected?'已连接':'已断开'"></span>
+    </div>
+    <p class="text-xs text-on-surface-variant">实时推送录制状态、合并进度等</p>
+  </div>
+  <div class="bg-surface-container p-6 rounded-xl border border-outline-variant/10">
+    <div class="flex items-center gap-3 mb-4">
+      <span class="material-symbols-outlined text-primary">vpn_key</span>
+      <h3 class="text-sm font-bold">代理状态</h3>
+    </div>
+    <div class="flex items-center gap-2 mb-2">
+      <span class="w-2.5 h-2.5 rounded-full" :class="networkInfo.proxy_ok?'bg-[#00b894]':'bg-error'"></span>
+      <span class="text-sm font-medium" x-text="networkInfo.proxy || 'http://127.0.0.1:7890'"></span>
+    </div>
+    <p class="text-xs text-on-surface-variant">用于 Stripchat 等需要代理的平台</p>
+  </div>
+</div>
+<div class="bg-surface-container rounded-xl border border-outline-variant/10 mb-8">
+  <div class="px-6 py-4 border-b border-outline-variant/10">
+    <h3 class="text-sm font-bold">实时带宽监控</h3>
+  </div>
+  <div class="divide-y divide-outline-variant/5">
+    <template x-for="m in models.filter(m=>m.state==='recording')" :key="m.username">
+      <div class="px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span class="w-2 h-2 rounded-full bg-error animate-pulse"></span>
+          <span class="text-sm font-medium" x-text="m.username"></span>
+        </div>
+        <span class="text-sm font-mono text-primary" x-text="m.current_recording?.bandwidth_kbps ? m.current_recording.bandwidth_kbps.toFixed(0)+' kbps' : '-'"></span>
+      </div>
+    </template>
+    <template x-if="models.filter(m=>m.state==='recording').length===0">
+      <div class="px-6 py-8 text-center text-on-surface-variant text-sm">当前无录制中的流</div>
+    </template>
+  </div>
+</div>
+<div class="bg-surface-container rounded-xl border border-outline-variant/10">
+  <div class="px-6 py-4 border-b border-outline-variant/10">
+    <h3 class="text-sm font-bold">平台连接状态</h3>
+  </div>
+  <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 p-6">
+    <template x-for="p in ['douyin','bilibili','twitch','youtube','stripchat']" :key="p">
+      <div class="bg-surface-container-low p-3 rounded-lg flex items-center gap-3">
+        <span class="w-2.5 h-2.5 rounded-full" :class="models.some(m=>m.platform===p)?'bg-[#00b894]':'bg-outline-variant'"></span>
+        <span class="text-sm font-medium capitalize" x-text="({douyin:'抖音',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',stripchat:'Stripchat'})[p]"></span>
+      </div>
+    </template>
+  </div>
+</div>
+</div>
+
+<!-- ========== PAGE: SYSTEM ========== -->
+<div x-show="currentPage==='system'" x-cloak>
+<!-- System -->
+<h2 class="text-2xl font-black tracking-tight mb-6">System</h2>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+  <div class="bg-surface-container p-6 rounded-xl border border-outline-variant/10">
+    <h3 class="text-sm font-bold mb-4 flex items-center gap-2"><span class="material-symbols-outlined text-primary text-lg">info</span>系统信息</h3>
+    <div class="space-y-3 text-sm">
+      <div class="flex justify-between"><span class="text-on-surface-variant">Python</span><span class="font-mono" x-text="systemInfo.python_version || '-'"></span></div>
+      <div class="flex justify-between"><span class="text-on-surface-variant">ffmpeg</span><span class="font-mono" x-text="systemInfo.ffmpeg_version || '-'"></span></div>
+      <div class="flex justify-between"><span class="text-on-surface-variant">streamlink</span><span class="font-mono" x-text="systemInfo.streamlink_version || '-'"></span></div>
+      <div class="flex justify-between"><span class="text-on-surface-variant">yt-dlp</span><span class="font-mono" x-text="systemInfo.ytdlp_version || '-'"></span></div>
+      <div class="flex justify-between"><span class="text-on-surface-variant">运行时间</span><span class="font-mono" x-text="systemInfo.uptime || '-'"></span></div>
+    </div>
+  </div>
+  <div class="bg-surface-container p-6 rounded-xl border border-outline-variant/10">
+    <h3 class="text-sm font-bold mb-4 flex items-center gap-2"><span class="material-symbols-outlined text-primary text-lg">speed</span>录制引擎</h3>
+    <div class="space-y-3 text-sm">
+      <div class="flex items-center justify-between">
+        <span class="text-on-surface-variant">streamlink</span>
+        <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="systemInfo.streamlink_available?'bg-[#00b894]/20 text-[#00b894]':'bg-error-container/30 text-error'" x-text="systemInfo.streamlink_available?'可用':'不可用'"></span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-on-surface-variant">yt-dlp</span>
+        <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="systemInfo.ytdlp_available?'bg-[#00b894]/20 text-[#00b894]':'bg-error-container/30 text-error'" x-text="systemInfo.ytdlp_available?'可用':'不可用'"></span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-on-surface-variant">ffmpeg</span>
+        <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="systemInfo.ffmpeg_available?'bg-[#00b894]/20 text-[#00b894]':'bg-error-container/30 text-error'" x-text="systemInfo.ffmpeg_available?'可用':'不可用'"></span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-on-surface-variant">Playwright</span>
+        <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="systemInfo.playwright_available?'bg-[#00b894]/20 text-[#00b894]':'bg-error-container/30 text-error'" x-text="systemInfo.playwright_available?'可用':'不可用'"></span>
+      </div>
+      <div class="flex justify-between"><span class="text-on-surface-variant">监控主播数</span><span class="font-bold" x-text="models.length"></span></div>
+    </div>
+  </div>
+</div>
+<!-- Log Viewer -->
+<div class="bg-surface-container rounded-xl border border-outline-variant/10">
+  <div class="px-6 py-4 border-b border-outline-variant/10 flex items-center justify-between">
+    <h3 class="text-sm font-bold flex items-center gap-2"><span class="material-symbols-outlined text-primary text-lg">receipt_long</span>系统日志</h3>
+    <button class="px-3 py-1.5 bg-surface-container-highest text-xs font-bold rounded border border-outline-variant/20 hover:bg-surface-bright transition-all" @click="loadLogs()">
+      <span class="material-symbols-outlined text-sm align-middle mr-1">refresh</span>刷新
+    </button>
+  </div>
+  <div class="p-4 max-h-[500px] overflow-y-auto scrollbar-hide">
+    <pre class="text-[11px] leading-relaxed text-on-surface-variant whitespace-pre-wrap break-all font-mono" x-text="logEntries.join('\n') || '暂无日志'"></pre>
+  </div>
+</div>
+</div>
+
+</div>
+</main>
+
+<!-- ===== MODALS ===== -->
+<!-- ===== RECORDINGS MODAL ===== -->
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-surface-dim/60 backdrop-blur-xl" x-show="showModal" x-cloak @click.self="showModal=false">
+  <div class="w-[800px] max-h-[90vh] bg-surface-container border border-outline-variant/30 rounded-xl shadow-2xl flex flex-col overflow-hidden" @click.stop>
+    <!-- Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-outline-variant/15">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary-container to-primary flex items-center justify-center">
+          <span class="material-symbols-outlined text-on-primary-container">account_circle</span>
+        </div>
+        <div>
+          <h2 class="text-lg font-bold tracking-tight" x-text="modalUsername"></h2>
+          <p class="text-xs text-on-surface-variant">StreamVideo Manager</p>
+        </div>
+      </div>
+      <button class="text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest w-10 h-10 rounded-full transition-all flex items-center justify-center" @click="showModal=false"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <!-- Tabs -->
+    <div class="flex px-6 border-b border-outline-variant/15 bg-surface-container-low">
+      <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='files'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='files'">文件列表</button>
+      <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='sessions'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='sessions'; loadSessions()">录制会话</button>
+      <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='merge'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='merge'; loadGroups()">手动合并</button>
+    </div>
+    <!-- Content -->
+    <div class="flex-1 overflow-y-auto scrollbar-hide">
+      <!-- Stats -->
+      <div class="grid grid-cols-3 gap-3 p-6 bg-surface-container-low/50" x-show="modalStats">
+        <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10">
+          <p class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1">会话数</p>
+          <p class="text-2xl font-black" x-text="modalStats?.session_count || 0"></p>
+        </div>
+        <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10">
+          <p class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1">存储占用</p>
+          <p class="text-2xl font-black text-primary" x-text="fmtSize(modalStats?.total_size || 0)"></p>
+        </div>
+        <div class="bg-surface-container-high p-4 rounded-lg border border-outline-variant/10">
+          <p class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1">总时长</p>
+          <p class="text-2xl font-black" x-text="fmtDur(modalStats?.total_duration || 0)"></p>
+        </div>
+      </div>
+      <!-- Video Player -->
+      <div class="px-6 pb-2" x-show="playingVideo">
+        <video class="w-full rounded-xl bg-black" controls autoplay :src="playingVideo"></video>
+      </div>
+
+      <!-- TAB: Files -->
+      <template x-if="modalTab==='files'">
+        <div class="px-6 pb-6">
+          <div class="flex items-center gap-3 py-4">
+            <div class="relative flex-1">
+              <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-lg">search</span>
+              <input class="w-full bg-surface-container-highest border-none rounded-md pl-10 pr-4 py-2 text-sm focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/50" placeholder="搜索文件..." x-model="fileSearch"/>
+            </div>
+            <select class="bg-surface-container-highest border-none rounded-md px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary" x-model="fileSort">
+              <option value="time">按时间</option><option value="size">按大小</option><option value="name">按文件名</option>
+            </select>
+            <button class="px-3 py-2 rounded-md text-sm font-medium transition-all" :class="batchMode?'bg-primary text-on-primary':'bg-surface-container-highest text-on-surface-variant hover:text-on-surface'" @click="batchMode=!batchMode; selectedFiles=[]" x-text="batchMode?'取消':'批量'"></button>
+            <button class="px-3 py-2 rounded-md bg-error text-on-error text-sm font-bold transition-all" x-show="batchMode && selectedFiles.length>0" @click="batchDelete()" x-text="'删除('+selectedFiles.length+')'"></button>
+          </div>
+          <template x-if="modalFiles.length===0">
+            <p class="text-center py-12 text-on-surface-variant text-sm">暂无录制文件</p>
+          </template>
+          <table class="w-full text-left" x-show="modalFiles.length>0">
+            <thead>
+              <tr class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold border-b border-outline-variant/15">
+                <th class="pb-3 pl-2 w-8" x-show="batchMode"><input type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary"/></th>
+                <th class="pb-3">文件名</th><th class="pb-3 text-right">大小</th><th class="pb-3 text-right">日期</th><th class="pb-3 text-right pr-2">操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-outline-variant/5">
+              <template x-for="f in filteredFiles" :key="f.filename">
+                <tr class="group hover:bg-surface-container-high/50 transition-colors">
+                  <td class="py-3 pl-2" x-show="batchMode"><input type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary" :checked="selectedFiles.includes(f.filename)" @click.stop="toggleBatchSelect(f.filename)"/></td>
+                  <td class="py-3">
+                    <div class="flex items-center gap-3 cursor-pointer" @click="playVideo(f)">
+                      <span class="material-symbols-outlined text-on-surface-variant">movie</span>
+                      <div>
+                        <span class="text-sm font-medium" x-text="f.filename"></span>
+                        <span x-show="f.filename.includes('_merged')" class="ml-2 bg-secondary-container/30 text-secondary px-2 py-0.5 rounded text-[10px] font-bold uppercase">已合并</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td class="py-3 text-sm text-right text-on-surface-variant" x-text="fmtSize(f.size)"></td>
+                  <td class="py-3 text-sm text-right text-on-surface-variant" x-text="fmtDate(f.created)"></td>
+                  <td class="py-3 text-right pr-2">
+                    <div class="flex items-center justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
+                      <button class="p-1.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-tertiary transition-all" @click.stop="renameFile(f.filename)" x-show="!batchMode"><span class="material-symbols-outlined text-lg">edit</span></button>
+                      <a class="p-1.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all" :href="'/api/video/'+modalUsername+'/'+f.filename+'?download=1'" @click.stop><span class="material-symbols-outlined text-lg">download</span></a>
+                      <button class="p-1.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-error transition-all" @click.stop="deleteFile(f.filename)" x-show="!batchMode"><span class="material-symbols-outlined text-lg">delete</span></button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <!-- TAB: Sessions -->
+      <template x-if="modalTab==='sessions'">
+        <div class="p-6 space-y-4">
+          <template x-if="modalSessions.length===0">
+            <p class="text-center py-12 text-on-surface-variant text-sm">暂无录制会话</p>
+          </template>
+          <template x-for="(s, si) in modalSessions" :key="s.session_id">
+            <div class="bg-surface-container-high rounded-xl border border-outline-variant/10 overflow-hidden">
+              <div class="px-4 py-3 flex items-center justify-between border-b border-outline-variant/10">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm font-bold" x-text="'会话 '+(modalSessions.length-si)"></span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                    :class="{'bg-error/20 text-error':s.status==='active','bg-tertiary/20 text-tertiary':s.status==='ended','bg-primary/20 text-primary':s.status==='merging','bg-[#00b894]/20 text-[#00b894]':s.status==='merged','bg-error-container/30 text-error':s.status==='error'}"
+                    x-text="sessionStatusText(s.status)"></span>
+                  <span class="text-xs text-on-surface-variant" x-text="s.segments.length+' 个片段'"></span>
+                  <span class="text-xs text-on-surface-variant" x-text="fmtSessionTime(s.started_at, s.ended_at)"></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <template x-if="s.status==='active'">
+                    <span class="flex items-center gap-1.5 text-xs text-error"><span class="w-2 h-2 rounded-full bg-error animate-pulse"></span>录制中</span>
+                  </template>
+                  <template x-if="s.status==='merging'">
+                    <span class="flex items-center gap-2 text-xs text-primary"><span class="material-symbols-outlined anim-spin text-sm">progress_activity</span><span x-text="Math.round((activeMerges[s.session_id]?.progress||0)*100)+'%'"></span></span>
+                  </template>
+                  <template x-if="s.status==='merged'">
+                    <span class="text-xs text-[#00b894] cursor-pointer hover:underline" @click="playingVideo='/api/video/'+modalUsername+'/'+s.merged_file" x-text="s.merged_file"></span>
+                  </template>
+                  <template x-if="s.status==='ended' && s.segments.length>=2">
+                    <button class="px-3 py-1 bg-gradient-to-r from-primary-container to-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="mergeSession(s.session_id)">合并</button>
+                  </template>
+                  <template x-if="s.status==='error'">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs text-error" x-text="s.merge_error||'错误'"></span>
+                      <button class="px-2 py-1 bg-surface-container-highest text-xs font-bold rounded text-tertiary hover:bg-surface-bright transition-all" @click="mergeSession(s.session_id)">重试</button>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              <template x-if="s.status==='merging' && activeMerges[s.session_id]?.progress>0">
+                <div class="h-1 bg-surface-container-highest"><div class="h-full bg-primary transition-all" :style="'width:'+(activeMerges[s.session_id]?.progress*100)+'%'"></div></div>
+              </template>
+              <div class="divide-y divide-outline-variant/5">
+                <template x-for="fn in s.segments" :key="fn">
+                  <div class="px-4 py-2 flex items-center justify-between text-sm cursor-pointer hover:bg-surface-container/50 transition-colors" @click="playingVideo='/api/video/'+modalUsername+'/'+fn">
+                    <div class="flex items-center gap-2"><span class="material-symbols-outlined text-on-surface-variant text-sm">video_file</span><span x-text="fn"></span></div>
+                    <span class="text-xs text-on-surface-variant" x-text="getFileSize(fn)"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- TAB: Manual Merge -->
+      <template x-if="modalTab==='merge'">
+        <div class="p-6">
+          <div class="flex items-center gap-4 mb-6 pb-4 border-b border-outline-variant/10">
+            <span class="text-xs text-on-surface-variant">间隔阈值</span>
+            <select class="bg-surface-container-highest border-none rounded-md px-3 py-1.5 text-sm focus:ring-1 focus:ring-primary" x-model.number="mergeGap" @change="loadGroups()">
+              <option value="5">5 分钟</option><option value="10">10 分钟</option><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60">60 分钟</option>
+            </select>
+            <label class="flex items-center gap-2 text-xs text-on-surface-variant cursor-pointer">
+              <input type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary" x-model="deleteAfterMerge"/>合并后删除原文件
+            </label>
+            <div class="flex-1"></div>
+            <button class="px-4 py-1.5 bg-gradient-to-r from-primary-container to-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" x-show="mergeGroups.length>0" @click="mergeAll()">全部合并</button>
+          </div>
+          <template x-if="mergeGroups.length===0">
+            <p class="text-center py-12 text-on-surface-variant text-sm">未检测到可合并的片段组</p>
+          </template>
+          <div class="space-y-4">
+            <template x-for="(group, gi) in mergeGroups" :key="group.id">
+              <div class="bg-surface-container-high rounded-xl border border-outline-variant/10 overflow-hidden">
+                <div class="px-4 py-3 flex items-center justify-between border-b border-outline-variant/10">
+                  <div><span class="text-sm font-bold" x-text="'分组 '+(gi+1)"></span><span class="text-xs text-on-surface-variant ml-2" x-text="group.count+' 个片段，'+fmtSize(group.total_size)"></span></div>
+                  <div class="flex items-center gap-2">
+                    <template x-if="activeMerges[group.id]?.status==='running'">
+                      <span class="flex items-center gap-2 text-xs text-primary"><span class="material-symbols-outlined anim-spin text-sm">progress_activity</span><span x-text="Math.round((activeMerges[group.id]?.progress||0)*100)+'%'"></span></span>
+                    </template>
+                    <template x-if="activeMerges[group.id]?.status==='done'">
+                      <span class="text-xs text-[#00b894] font-bold">已合并</span>
+                    </template>
+                    <template x-if="!activeMerges[group.id] || activeMerges[group.id]?.status==='error'">
+                      <button class="px-3 py-1 bg-gradient-to-r from-primary-container to-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="doMerge(group)">合并</button>
+                    </template>
+                  </div>
+                </div>
+                <template x-if="activeMerges[group.id]?.status==='running' && activeMerges[group.id]?.progress>0">
+                  <div class="h-1 bg-surface-container-highest"><div class="h-full bg-primary transition-all" :style="'width:'+(activeMerges[group.id]?.progress*100)+'%'"></div></div>
+                </template>
+                <div class="divide-y divide-outline-variant/5">
+                  <template x-for="f in group.files" :key="f.filename">
+                    <div class="px-4 py-2 flex items-center gap-3 text-sm">
+                      <input type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary" :checked="!excludedFiles.includes(f.filename)" @change="toggleExclude(f.filename)"/>
+                      <span class="flex-1" x-text="f.filename"></span>
+                      <span class="text-xs text-on-surface-variant" x-text="fmtSize(f.size)"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+    <!-- Footer -->
+    <div class="px-6 py-4 bg-surface-container-low border-t border-outline-variant/15 flex items-center justify-between" x-show="modalTab==='files' && modalFiles.length>0">
+      <span class="text-xs text-on-surface-variant"><span class="font-bold text-on-surface" x-text="modalFiles.length"></span> 个文件 · <span class="font-bold text-on-surface" x-text="fmtSize(modalFiles.reduce((s,f)=>s+f.size,0))"></span></span>
+      <a class="text-xs text-primary font-medium hover:underline cursor-pointer" :href="'/api/recordings/'+modalUsername+'/export'" target="_blank">导出 CSV</a>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SETTINGS MODAL ===== -->
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-surface-dim/60 backdrop-blur-xl" x-show="showSettings" x-cloak @click.self="showSettings=false">
+  <div class="w-full max-w-[480px] bg-surface-container rounded-xl shadow-2xl overflow-hidden border border-outline-variant/15" @click.stop>
+    <div class="px-6 py-5 border-b border-outline-variant/15 flex justify-between items-center bg-surface-container-high/50">
+      <div><h3 class="text-lg font-bold tracking-tight">设置</h3><p class="text-xs text-on-surface-variant">录制管道与存储配置</p></div>
+      <button class="text-on-surface-variant hover:text-on-surface p-1 rounded-full hover:bg-surface-container-highest transition-colors" @click="showSettings=false"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="p-6 space-y-6">
+      <!-- Auto Merge -->
+      <div class="flex items-center justify-between">
+        <div class="max-w-[70%]"><h4 class="text-sm font-semibold">自动合并</h4><p class="text-xs text-on-surface-variant">录制结束后自动合并同一会话的片段</p></div>
+        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="settings.auto_merge?'bg-primary-container':'bg-surface-container-highest'" @click="updateSetting('auto_merge',!settings.auto_merge)">
+          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.auto_merge?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
+        </button>
+      </div>
+      <!-- Delete Originals -->
+      <div class="flex items-center justify-between">
+        <div class="max-w-[70%]"><h4 class="text-sm font-semibold">合并后删除原文件</h4><p class="text-xs text-on-surface-variant">自动合并完成后删除原始片段</p></div>
+        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="settings.auto_delete_originals?'bg-primary-container':'bg-surface-container-highest'" @click="updateSetting('auto_delete_originals',!settings.auto_delete_originals)">
+          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.auto_delete_originals?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
+        </button>
+      </div>
+      <!-- Dropdowns -->
+      <div class="grid grid-cols-2 gap-4">
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">合并间隔阈值</label>
+          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.merge_gap_minutes" @change="updateSetting('merge_gap_minutes',parseInt($event.target.value))">
+            <option value="5">5 分钟</option><option value="10">10 分钟</option><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60">60 分钟</option>
+          </select>
+        </div>
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">最小片段大小</label>
+          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.min_segment_size_kb" @change="updateSetting('min_segment_size_kb',parseInt($event.target.value))">
+            <option value="100">100 KB</option><option value="500">500 KB</option><option value="1024">1 MB</option><option value="5120">5 MB</option>
+          </select>
+        </div>
+      </div>
+      <!-- Smart Rename -->
+      <div class="flex items-center justify-between">
+        <div class="max-w-[70%]"><h4 class="text-sm font-semibold">智能重命名</h4><p class="text-xs text-on-surface-variant">合并后重命名为 主播名_日期_时长.mp4</p></div>
+        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="settings.smart_rename?'bg-primary-container':'bg-surface-container-highest'" @click="updateSetting('smart_rename',!settings.smart_rename)">
+          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.smart_rename?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
+        </button>
+      </div>
+      <!-- H.265 转码 -->
+      <div class="flex items-center justify-between">
+        <div class="max-w-[70%]"><h4 class="text-sm font-semibold">H.265 转码</h4><p class="text-xs text-on-surface-variant">合并后自动转码为 H.265，节省约 50% 空间（耗时较长）</p></div>
+        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="settings.h265_transcode?'bg-primary-container':'bg-surface-container-highest'" @click="updateSetting('h265_transcode',!settings.h265_transcode)">
+          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.h265_transcode?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
+        </button>
+      </div>
+      <div class="h-px bg-outline-variant/15"></div>
+      <!-- Webhook 配置 -->
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h4 class="text-sm font-semibold">Webhook 通知</h4>
+          <button class="text-xs text-primary font-medium hover:underline" @click="settings.webhooks = [...(settings.webhooks||[]), {type:'generic',url:'',events:['recording_start','recording_end','merge_done','error']}]">+ 添加</button>
+        </div>
+        <template x-for="(wh, wi) in (settings.webhooks||[])" :key="wi">
+          <div class="bg-surface-container-low rounded-lg p-3 space-y-2 border border-outline-variant/10">
+            <div class="flex items-center gap-2">
+              <select class="flex-none bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary w-24" x-model="wh.type">
+                <option value="generic">Generic</option>
+                <option value="discord">Discord</option>
+                <option value="telegram">Telegram</option>
+              </select>
+              <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Webhook URL" x-model="wh.url"/>
+              <button class="text-on-surface-variant hover:text-error text-xs p-1" @click="settings.webhooks.splice(wi,1); updateSetting('webhooks', settings.webhooks)">
+                <span class="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+            <template x-if="wh.type==='telegram'">
+              <div class="flex gap-2">
+                <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Bot Token" x-model="wh.bot_token"/>
+                <input class="w-28 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Chat ID" x-model="wh.chat_id"/>
+              </div>
+            </template>
+            <div class="flex items-center gap-2">
+              <button class="text-[10px] px-2 py-0.5 rounded font-bold transition-all" :class="wh.events?.includes('recording_start')?'bg-primary/20 text-primary':'bg-surface-container-highest text-on-surface-variant'" @click="wh.events?.includes('recording_start')?wh.events.splice(wh.events.indexOf('recording_start'),1):wh.events.push('recording_start')">录制</button>
+              <button class="text-[10px] px-2 py-0.5 rounded font-bold transition-all" :class="wh.events?.includes('merge_done')?'bg-primary/20 text-primary':'bg-surface-container-highest text-on-surface-variant'" @click="wh.events?.includes('merge_done')?wh.events.splice(wh.events.indexOf('merge_done'),1):wh.events.push('merge_done')">合并</button>
+              <button class="text-[10px] px-2 py-0.5 rounded font-bold transition-all" :class="wh.events?.includes('error')?'bg-error/20 text-error':'bg-surface-container-highest text-on-surface-variant'" @click="wh.events?.includes('error')?wh.events.splice(wh.events.indexOf('error'),1):wh.events.push('error')">错误</button>
+              <div class="flex-1"></div>
+              <button class="text-[10px] px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant hover:text-primary font-bold" @click="testWebhook(wh)">测试</button>
+              <button class="text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary font-bold" @click="updateSetting('webhooks', settings.webhooks)">保存</button>
+            </div>
+          </div>
+        </template>
+      </div>
+      <div class="h-px bg-outline-variant/15"></div>
+      <!-- Storage Status -->
+      <div class="bg-surface-container-low rounded-xl p-4 border border-outline-variant/10">
+        <div class="flex justify-between items-center mb-3">
+          <div class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-lg">storage</span><span class="text-sm font-bold">存储状态</span></div>
+          <span class="text-xs font-mono text-on-surface-variant" x-text="fmtSize(diskInfo.free_bytes)+' 可用'"></span>
+        </div>
+        <div class="h-2 w-full bg-surface-container-highest rounded-full overflow-hidden mb-2">
+          <div class="h-full bg-gradient-to-r from-primary-container to-primary rounded-full" :style="'width:'+Math.min(diskInfo.total_bytes?diskInfo.recordings_bytes/diskInfo.total_bytes*100:0,100)+'%'"></div>
+        </div>
+        <div class="flex justify-between text-[10px] text-on-surface-variant font-medium">
+          <span x-text="fmtSize(diskInfo.recordings_bytes)+' 已用'"></span>
+          <span x-text="fmtSize(diskInfo.total_bytes)+' 总容量'"></span>
+        </div>
+      </div>
+    </div>
+    <div class="px-6 py-4 bg-surface-container-highest/30 border-t border-outline-variant/15 flex justify-between items-center">
+      <button class="text-sm font-medium text-primary flex items-center gap-2 px-3 py-2 rounded-md hover:bg-surface-container-highest transition-all" @click="showSettings=false; currentPage='system'; fetchSystem(); loadLogs()">
+        <span class="material-symbols-outlined text-base">receipt_long</span>查看日志
+      </button>
+      <button class="px-5 py-2 text-sm font-semibold text-on-surface hover:bg-surface-container-highest rounded-md transition-all" @click="showSettings=false">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SCHEDULE MODAL ===== -->
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-surface-dim/60 backdrop-blur-xl" x-show="showSchedule" x-cloak @click.self="showSchedule=false">
+  <div class="w-full max-w-[380px] bg-surface-container rounded-xl shadow-2xl overflow-hidden border border-outline-variant/15" @click.stop>
+    <div class="px-6 py-4 border-b border-outline-variant/15 flex justify-between items-center">
+      <div><h3 class="text-base font-bold">定时录制</h3><p class="text-xs text-on-surface-variant" x-text="scheduleUsername"></p></div>
+      <button class="text-on-surface-variant hover:text-on-surface p-1 rounded-full hover:bg-surface-container-highest transition-colors" @click="showSchedule=false"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="p-6 space-y-5">
+      <!-- 录制质量 -->
+      <div class="flex items-center justify-between">
+        <h4 class="text-sm font-semibold">录制质量</h4>
+        <select class="bg-surface-container-high border-none text-sm rounded-md h-9 px-3 focus:ring-1 focus:ring-primary" :value="scheduleQuality" @change="scheduleQuality=$event.target.value">
+          <option value="best">最佳</option><option value="1080p">1080p</option><option value="720p">720p</option><option value="480p">480p</option><option value="audio_only">仅音频</option>
+        </select>
+      </div>
+      <div class="h-px bg-outline-variant/15"></div>
+      <!-- 定时开关 -->
+      <div class="flex items-center justify-between">
+        <h4 class="text-sm font-semibold">启用定时</h4>
+        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="scheduleData.enabled?'bg-primary-container':'bg-surface-container-highest'" @click="scheduleData.enabled=!scheduleData.enabled">
+          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="scheduleData.enabled?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
+        </button>
+      </div>
+      <div class="grid grid-cols-2 gap-4" x-show="scheduleData.enabled">
+        <div class="space-y-1">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">开始时间</label>
+          <input type="time" class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" x-model="scheduleData.start"/>
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">结束时间</label>
+          <input type="time" class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" x-model="scheduleData.end"/>
+        </div>
+      </div>
+      <div x-show="scheduleData.enabled">
+        <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2 block">录制日期</label>
+        <div class="flex gap-1.5">
+          <template x-for="(day, di) in ['一','二','三','四','五','六','日']" :key="di">
+            <button class="w-9 h-9 rounded-lg text-xs font-bold transition-all"
+              :class="scheduleData.days?.includes(di)?'bg-primary-container text-on-primary-container':'bg-surface-container-highest text-on-surface-variant hover:text-on-surface'"
+              @click="scheduleData.days?.includes(di)?scheduleData.days.splice(scheduleData.days.indexOf(di),1):scheduleData.days.push(di)"
+              x-text="day"></button>
+          </template>
+        </div>
+      </div>
+      <div class="text-xs text-on-surface-variant" x-show="scheduleData.enabled">
+        <span x-show="scheduleData.start && scheduleData.end" x-text="'每' + (scheduleData.days?.length===7?'天':scheduleData.days?.map(d=>['一','二','三','四','五','六','日'][d]).join('、')) + ' ' + scheduleData.start + ' - ' + scheduleData.end + ' 自动监控录制'"></span>
+      </div>
+    </div>
+    <div class="px-6 py-4 bg-surface-container-highest/30 border-t border-outline-variant/15 flex justify-end gap-3">
+      <button class="px-4 py-2 text-sm font-semibold text-on-surface hover:bg-surface-container-highest rounded-md transition-all" @click="showSchedule=false">取消</button>
+      <button class="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-primary-container to-primary rounded-md active:scale-95 transition-all" @click="saveSchedule()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MOBILE NAV ===== -->
+<nav class="md:hidden fixed bottom-0 left-0 w-full bg-surface h-16 flex items-center justify-around z-50 border-t border-outline-variant/15 px-4">
+  <div class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='streams'?'text-primary':'text-on-surface-variant'" @click="currentPage='streams'">
+    <span class="material-symbols-outlined">sensors</span>
+    <span class="text-[10px] font-bold uppercase tracking-tighter">Streams</span>
+  </div>
+  <div class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='storage'?'text-primary':'text-on-surface-variant'" @click="currentPage='storage'">
+    <span class="material-symbols-outlined">hard_drive</span>
+    <span class="text-[10px] font-bold uppercase tracking-tighter">Storage</span>
+  </div>
+  <div class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='system'?'text-primary':'text-on-surface-variant'" @click="currentPage='system'; fetchSystem(); loadLogs()">
+    <span class="material-symbols-outlined">settings_input_component</span>
+    <span class="text-[10px] font-bold uppercase tracking-tighter">System</span>
+  </div>
+</nav>
+
+<!-- ===== TOAST ===== -->
+<div x-show="toast" x-cloak x-transition
+  class="fixed bottom-6 right-6 z-[200] flex items-center gap-4 bg-surface-container-highest px-6 py-4 rounded-xl border border-outline-variant/20 shadow-2xl backdrop-blur-xl">
+  <div class="w-10 h-10 bg-[#00b894]/20 rounded-full flex items-center justify-center text-[#00b894]">
+    <span class="material-symbols-outlined mso-fill">check_circle</span>
+  </div>
+  <div>
+    <p class="text-sm font-medium text-on-surface" x-text="toast"></p>
+  </div>
+  <button class="ml-2 text-on-surface-variant hover:text-on-surface" @click="toast=''">
+    <span class="material-symbols-outlined text-lg">close</span>
+  </button>
+</div>
+
+<!-- ===== SCRIPT ===== -->
+<script>
+function app() {
+  return {
+    models: [], newModel: '', wsConnected: false, ws: null, thumbTs: Date.now(),
+    showModal: false, modalTitle: '', modalFiles: [], modalUsername: '', modalTab: 'files', modalSessions: [],
+    playingVideo: null, toast: '', toastTimer: null, ticker: null,
+    mergeGroups: [], mergeGap: 15, activeMerges: {}, deleteAfterMerge: false, excludedFiles: [],
+    settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false },
+    showSettings: false, diskInfo: { recordings_bytes: 0, free_bytes: 0, total_bytes: 0 },
+    addingModel: false, dragOver: false, fileSort: 'time', fileSearch: '', batchMode: false, selectedFiles: [],
+    logEntries: [], modalStats: null,
+    currentPage: 'streams', networkInfo: {}, systemInfo: {},
+    showSchedule: false, scheduleUsername: '', scheduleQuality: 'best', scheduleData: { enabled: false, start: '20:00', end: '02:00', days: [0,1,2,3,4,5,6] },
+    storageBreakdown: [],
+
+    get sortedModels() {
+      const order = { recording: 0, reconnecting: 1, monitoring: 2, error: 3, idle: 4 };
+      return [...this.models].sort((a, b) => (order[a.state] ?? 9) - (order[b.state] ?? 9));
+    },
+    get recordingCount() { return this.models.filter(m => m.state === 'recording').length; },
+    get onlineCount() { return this.models.filter(m => m.status === 'public').length; },
+    get filteredFiles() {
+      let files = [...this.modalFiles];
+      if (this.fileSearch) { const q = this.fileSearch.toLowerCase(); files = files.filter(f => f.filename.toLowerCase().includes(q)); }
+      if (this.fileSort === 'size') files.sort((a, b) => b.size - a.size);
+      else if (this.fileSort === 'name') files.sort((a, b) => a.filename.localeCompare(b.filename));
+      return files;
+    },
+
+    init() {
+      // 从 URL 提取 token（用于认证模式）
+      this._token = new URLSearchParams(location.search).get('token') || '';
+      this.connectWS(); this.fetchModels(); this.fetchSettings(); this.fetchDisk();
+      this.ticker = setInterval(() => { this.models = [...this.models]; }, 5000);
+      setInterval(() => { this.thumbTs = Date.now(); }, 15000);
+      setInterval(() => { this.fetchDisk(); }, 60000);
+      if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js').catch(()=>{});
+    },
+
+    _apiFetch(url, opts) {
+      // 自动附加 token
+      if (this._token) {
+        const sep = url.includes('?') ? '&' : '?';
+        url += sep + 'token=' + this._token;
+      }
+      return fetch(url, opts);
+    },
+
+    async fetchSettings() { try { const r = await fetch('/api/settings'); if (r.ok) this.settings = await r.json(); } catch(e) {} },
+    async fetchDisk() { try { const r = await fetch('/api/disk'); if (r.ok) this.diskInfo = await r.json(); } catch(e) {} },
+    async fetchModels() { try { const r = await fetch('/api/models'); if (r.ok) { const d = await r.json(); if (!this.models.length) this.models = d; } } catch(e) {} },
+    async fetchNetwork() { try { const r = await fetch('/api/network'); if (r.ok) this.networkInfo = await r.json(); } catch(e) { this.networkInfo = {}; } },
+    async fetchSystem() { try { const r = await fetch('/api/system'); if (r.ok) this.systemInfo = await r.json(); } catch(e) { this.systemInfo = {}; } },
+    async fetchStorageBreakdown() { try { const r = await fetch('/api/storage/breakdown'); if (r.ok) this.storageBreakdown = await r.json(); } catch(e) { this.storageBreakdown = []; } },
+
+    async updateSetting(key, value) {
+      this.settings[key] = value;
+      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: value }) });
+    },
+
+    connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const tokenParam = this._token ? `?token=${this._token}` : '';
+      try { this.ws = new WebSocket(`${proto}//${location.host}/ws${tokenParam}`); } catch(e) { return; }
+      this.ws.onopen = () => { this.wsConnected = true; this._wsRetryDelay = 3000; };
+      this.ws.onclose = () => { this.wsConnected = false; if (this._keepalive) { clearInterval(this._keepalive); this._keepalive = null; } const d = this._wsRetryDelay || 3000; setTimeout(() => this.connectWS(), d); this._wsRetryDelay = Math.min((d||3000)*2, 30000); };
+      this.ws.onerror = () => { this.wsConnected = false; };
+      this.ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'init') { this.models = msg.data; }
+        else if (msg.type === 'model_update') {
+          const idx = this.models.findIndex(m => m.username === msg.data.username);
+          const prev = idx >= 0 ? this.models[idx] : null;
+          if (idx >= 0) this.models[idx] = msg.data; else this.models.push(msg.data);
+          if (prev && prev.state !== msg.data.state) {
+            if (msg.data.state === 'recording') this.desktopNotify(`${msg.data.username} 开始录制`, '直播录制已启动');
+            else if (prev.state === 'recording' && msg.data.state !== 'reconnecting') this.desktopNotify(`${msg.data.username} 录制结束`, '直播录制已停止');
+          }
+        }
+        else if (msg.type === 'model_added') { if (!this.models.find(m => m.username === msg.data.username)) this.models.push(msg.data); }
+        else if (msg.type === 'model_removed') { this.models = this.models.filter(m => m.username !== msg.data.username); }
+        else if (msg.type === 'merge_done') {
+          this.activeMerges[msg.data.merge_id] = { status: 'done', progress: 1 };
+          const detail = msg.data.input_count ? `${msg.data.input_count} 个片段 (${this.fmtSize(msg.data.input_size)})` : '';
+          this.showToast(`${msg.data.username||''} 合并完成: ${msg.data.filename||''} ${detail}`);
+          this.desktopNotify(`${msg.data.username||''} 合并完成`, msg.data.filename||'');
+          if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
+        }
+        else if (msg.type === 'merge_error') { this.activeMerges[msg.data.merge_id] = { status: 'error' }; this.showToast('合并失败: '+(msg.data.error||'未知错误')); if (this.showModal && this.modalTab==='sessions') this.loadSessions(); }
+        else if (msg.type === 'merge_progress') { const d = msg.data; this.activeMerges[d.merge_id] = { ...this.activeMerges[d.merge_id], status: 'running', progress: d.progress }; }
+        else if (msg.type === 'auto_merge_done') {
+          if (msg.data.filename) { this.showToast(`${msg.data.username} 已自动合并 → ${msg.data.filename}`); this.desktopNotify(`${msg.data.username} 自动合并完成`, msg.data.filename); }
+          if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
+        }
+        else if (msg.type === 'settings_update') { this.settings = msg.data; }
+      };
+      if (!this._keepalive) { this._keepalive = setInterval(() => { if (this.ws?.readyState === WebSocket.OPEN) this.ws.send('ping'); }, 25000); }
+    },
+
+    async addModel() {
+      const raw = this.newModel.trim(); if (!raw || this.addingModel) return;
+      // 支持批量添加（多行 URL）
+      const urls = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+      this.addingModel = true;
+      let added = 0;
+      try {
+        for (const url of urls) {
+          const r = await fetch('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+          if (r.ok) { added++; const d = await r.json(); if (urls.length === 1) this.showToast(`已添加 ${d.username}`); }
+          else if (urls.length === 1) { const err = await r.json().catch(()=>({})); this.showToast('添加失败: '+(err.detail||'未知错误')); }
+        }
+        if (added > 0) { this.newModel = ''; if (urls.length > 1) this.showToast(`已添加 ${added} 个主播`); }
+      } catch(e) { this.showToast('添加失败: 网络错误'); } finally { this.addingModel = false; }
+    },
+    async removeModel(u) { if (!confirm(`删除 ${u}？`)) return; await fetch(`/api/models/${u}`, { method: 'DELETE' }); this.showToast(`已删除 ${u}`); },
+    async startModel(u) { await fetch(`/api/models/${u}/start`, { method: 'POST' }); },
+    async stopModel(u) { await fetch(`/api/models/${u}/stop`, { method: 'POST' }); },
+    async startAll() { await fetch('/api/start-all', { method: 'POST' }); this.showToast('全部启动'); },
+    async stopAll() { await fetch('/api/stop-all', { method: 'POST' }); this.showToast('全部停止'); },
+
+    async toggleModelAutoMerge(username, currentState) {
+      const ns = !currentState;
+      const m = this.models.find(m => m.username === username);
+      if (m) m.auto_merge = ns; // 乐观更新
+      try {
+        const r = await fetch(`/api/models/${username}/auto-merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto_merge: ns }) });
+        if (!r.ok) throw new Error('API error');
+        this.showToast(`${username} 自动合并: ${ns?'开':'关'}`);
+      } catch(e) {
+        if (m) m.auto_merge = currentState; // 回滚
+        this.showToast('操作失败，请重试');
+      }
+    },
+
+    handleKey(e) {
+      if (e.key === 'Escape') { this.showModal = false; this.showSettings = false; this.showSchedule = false; }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n') { e.preventDefault(); document.querySelector('.add-input')?.focus(); }
+    },
+    handleDrop(e) { this.dragOver = false; const t = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list'); if (t && t.startsWith('http')) { this.newModel = t; this.addModel(); } },
+
+    toggleBatchSelect(fn) { const i = this.selectedFiles.indexOf(fn); if (i >= 0) this.selectedFiles.splice(i, 1); else this.selectedFiles.push(fn); },
+    async batchDelete() {
+      if (!this.selectedFiles.length) return; if (!confirm(`删除选中的 ${this.selectedFiles.length} 个文件？`)) return;
+      for (const fn of this.selectedFiles) await fetch(`/api/recordings/${this.modalUsername}/${fn}`, { method: 'DELETE' });
+      this.showToast(`已删除 ${this.selectedFiles.length} 个文件`); this.selectedFiles = []; this.batchMode = false; await this.openRecordings(this.modalUsername);
+    },
+
+    async openRecordings(username) {
+      this.modalUsername = username; this.modalTitle = username; this.playingVideo = null; this.modalStats = null;
+      if (!this.showModal) { this.modalTab = 'files'; this.activeMerges = {}; this.excludedFiles = []; }
+      const r = await fetch(`/api/recordings/${username}`); this.modalFiles = await r.json(); this.showModal = true;
+      fetch(`/api/stats/${username}`).then(r=>r.json()).then(d=>this.modalStats=d).catch(()=>{});
+    },
+    playVideo(f) { this.playingVideo = `/api/video/${this.modalUsername}/${f.filename}`; },
+    async deleteFile(fn) { if (!confirm(`删除 ${fn}？`)) return; const r = await fetch(`/api/recordings/${this.modalUsername}/${fn}`, { method: 'DELETE' }); if (r.ok) { this.modalFiles = this.modalFiles.filter(f=>f.filename!==fn); if (this.playingVideo?.includes(fn)) this.playingVideo = null; this.showToast(`已删除 ${fn}`); } },
+    async renameFile(fn) {
+      const newName = prompt('重命名文件:', fn.replace('.mp4',''));
+      if (!newName || newName === fn.replace('.mp4','')) return;
+      try {
+        const r = await fetch(`/api/recordings/${this.modalUsername}/${fn}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new_name: newName }) });
+        const d = await r.json();
+        if (r.ok) { this.showToast(`已重命名为 ${d.new_name}`); await this.openRecordings(this.modalUsername); }
+        else this.showToast('重命名失败: ' + (d.error || '未知错误'));
+      } catch(e) { this.showToast('重命名失败'); }
+    },
+
+    async loadSessions() { try { const r = await fetch(`/api/sessions/${this.modalUsername}`); if (!r.ok) { this.modalSessions=[]; return; } this.modalSessions = (await r.json()).reverse(); } catch(e) { this.modalSessions=[]; } },
+    async mergeSession(sid) {
+      this.activeMerges[sid] = { status: 'running', progress: 0 };
+      try { const r = await fetch(`/api/sessions/${this.modalUsername}/${sid}/merge`, { method: 'POST' }); const d = await r.json(); if (!r.ok) { this.activeMerges[sid]={status:'error'}; this.showToast('合并失败: '+(d.error||'未知错误')); } else if (d.status==='done') { this.activeMerges[sid]={status:'done',progress:1}; this.showToast('会话合并完成'); await this.loadSessions(); await this.openRecordings(this.modalUsername); } } catch(e) { this.activeMerges[sid]={status:'error'}; this.showToast('合并请求失败'); }
+    },
+    async loadGroups() { try { const r = await fetch(`/api/recordings/${this.modalUsername}/groups?gap=${this.mergeGap}`); if (!r.ok) { this.mergeGroups=[]; return; } this.mergeGroups = await r.json(); } catch(e) { this.mergeGroups=[]; } },
+    toggleExclude(fn) { const i = this.excludedFiles.indexOf(fn); if (i>=0) this.excludedFiles.splice(i,1); else this.excludedFiles.push(fn); },
+    async doMerge(group) {
+      if (!group?.files?.length) { this.showToast('无效的分组数据'); return; }
+      const files = group.files.map(f=>f.filename).filter(fn=>!this.excludedFiles.includes(fn));
+      if (files.length<2) { this.showToast('至少需要选择2个片段'); return; }
+      if (!confirm(`确认合并 ${files.length} 个片段？${this.deleteAfterMerge?'\n合并后将删除原文件！':''}`)) return;
+      this.activeMerges[group.id] = { status: 'running' };
+      try { const r = await fetch(`/api/recordings/${this.modalUsername}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files, delete_originals: this.deleteAfterMerge }) }); const d = await r.json(); if (!r.ok) { this.activeMerges[group.id]={status:'error'}; this.showToast('合并失败: '+(d.error||'未知错误')); } else if (d.status==='done') { this.activeMerges[group.id]={status:'done'}; this.showToast('合并完成'); await this.openRecordings(this.modalUsername); } } catch(e) { this.activeMerges[group.id]={status:'error'}; this.showToast('合并请求失败'); }
+    },
+    async mergeAll() {
+      const groups = this.mergeGroups.filter(g=>!this.activeMerges[g.id]||this.activeMerges[g.id]?.status==='error');
+      if (!groups.length) return; if (!confirm(`确认合并全部 ${groups.length} 个分组？${this.deleteAfterMerge?'\n合并后将删除原文件！':''}`)) return;
+      for (let i=0;i<groups.length;i++) {
+        const g=groups[i]; const files=g.files.map(f=>f.filename).filter(fn=>!this.excludedFiles.includes(fn)); if (files.length<2) continue;
+        this.activeMerges[g.id]={status:'running'}; this.showToast(`合并中 ${i+1}/${groups.length}...`);
+        try { const r = await fetch(`/api/recordings/${this.modalUsername}/merge`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({files,delete_originals:this.deleteAfterMerge}) }); const d=await r.json(); if (r.ok&&d.status==='done') this.activeMerges[g.id]={status:'done'}; else if (!r.ok) this.activeMerges[g.id]={status:'error'}; } catch(e) { this.activeMerges[g.id]={status:'error'}; }
+      }
+      this.showToast('全部合并完成'); await this.openRecordings(this.modalUsername);
+    },
+
+    async loadLogs() { try { const r = await fetch('/api/logs?limit=300'); if (r.ok) this.logEntries = await r.json(); } catch(e) { this.logEntries=['加载日志失败']; } },
+
+    async testWebhook(wh) {
+      try {
+        const r = await fetch('/api/webhooks/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wh) });
+        const d = await r.json();
+        this.showToast(d.ok ? 'Webhook 测试成功' : 'Webhook 测试失败');
+      } catch(e) { this.showToast('Webhook 测试失败: 网络错误'); }
+    },
+
+    async openSchedule(username) {
+      this.scheduleUsername = username;
+      const m = this.models.find(m => m.username === username);
+      this.scheduleQuality = m?.quality || 'best';
+      try {
+        const r = await fetch(`/api/models/${username}/schedule`);
+        if (r.ok) {
+          const d = await r.json();
+          this.scheduleData = d.schedule || { enabled: false, start: '20:00', end: '02:00', days: [0,1,2,3,4,5,6] };
+        }
+      } catch(e) {
+        this.scheduleData = { enabled: false, start: '20:00', end: '02:00', days: [0,1,2,3,4,5,6] };
+      }
+      this.showSchedule = true;
+    },
+
+    async saveSchedule() {
+      try {
+        // 保存质量
+        if (this.scheduleQuality) {
+          await fetch(`/api/models/${this.scheduleUsername}/quality`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quality: this.scheduleQuality }) });
+          const m = this.models.find(m => m.username === this.scheduleUsername);
+          if (m) m.quality = this.scheduleQuality;
+        }
+        // 保存定时计划
+        await fetch(`/api/models/${this.scheduleUsername}/schedule`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ schedule: this.scheduleData }),
+        });
+        const m = this.models.find(m => m.username === this.scheduleUsername);
+        if (m) m.schedule = { ...this.scheduleData };
+        this.showToast(`${this.scheduleUsername} 设置已保存`);
+        this.showSchedule = false;
+      } catch(e) { this.showToast('保存失败'); }
+    },
+
+    async setQuality(username, quality) {
+      try {
+        await fetch(`/api/models/${username}/quality`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quality }) });
+        const m = this.models.find(m => m.username === username);
+        if (m) m.quality = quality;
+        this.showToast(`${username} 质量: ${quality}`);
+      } catch(e) { this.showToast('设置失败'); }
+    },
+
+    showToast(msg) { this.toast = msg; clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => { this.toast = ''; }, 3000); },
+    desktopNotify(title, body) { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body }); },
+
+    sessionStatusText(s) { return {active:'录制中',ended:'待合并',merging:'合并中',merged:'已合并',error:'错误'}[s]||s; },
+    stateText(s) { return {idle:'未启动',monitoring:'监控中',recording:'录制中',reconnecting:'重连中',error:'错误'}[s]||s; },
+    statusText(s) { return {offline:'离线',public:'在线',private:'私密',group:'团体秀',away:'离开',unknown:'检测中'}[s]||s; },
+    fmtSize(b) { if (!b) return '-'; const u=['B','KB','MB','GB','TB']; let i=0; while(b>=1024&&i<4){b/=1024;i++;} return b.toFixed(i>0?1:0)+' '+u[i]; },
+    fmtDur(s) { if (!s) return '-'; const h=Math.floor(s/3600),m=Math.floor(s%3600/60),sec=Math.floor(s%60); return h>0?`${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; },
+    fmtDate(ts) { if (!ts) return ''; const d=new Date(ts*1000); return d.toLocaleDateString('zh-CN')+' '+d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}); },
+    fmtSessionTime(start, end) { if (!start) return ''; const s=new Date(start*1000); const t=s.toLocaleDateString('zh-CN')+' '+s.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}); if (end) { const dur=end-start; const h=Math.floor(dur/3600),m=Math.floor(dur%3600/60); return `${t} (${h>0?h+'h':''}${m}m)`; } return t; },
+    getFileSize(fn) { const f=this.modalFiles.find(f=>f.filename===fn); return f?this.fmtSize(f.size):''; },
+    nameColor(name) { let h=0; for(let i=0;i<name.length;i++) h=name.charCodeAt(i)+((h<<5)-h); h=((h%360)+360)%360; return `hsl(${h},35%,25%)`; },
+    ago(ts) { if (!ts) return ''; const d=Math.floor(Date.now()/1000-ts); if (d<10) return '刚刚'; if (d<60) return d+'秒前'; if (d<3600) return Math.floor(d/60)+'分钟前'; return Math.floor(d/3600)+'小时前'; },
+  };
+}
+</script>
+
+</body>
+</html>
