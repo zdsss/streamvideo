@@ -4,13 +4,13 @@
 
 ## 支持平台
 
-| 平台 | 录制引擎 | 状态检测 | 断流阈值 |
-|------|---------|---------|---------|
-| 抖音直播 | streamlink | streamlink | 30s |
-| B站直播 | streamlink | B站 API | 20s |
-| Twitch | streamlink | streamlink | 20s |
-| YouTube | streamlink | streamlink | 20s |
-| Stripchat | yt-dlp / Playwright | Stripchat API | 15s |
+| 平台 | 录制引擎 | 状态检测 | 断流阈值 | 备注 |
+|------|---------|---------|---------|------|
+| 抖音直播 | streamlink | streamlink | 30s | 检测用原生 webcast API，streamlink 插件已失效 |
+| B站直播 | streamlink | B站 API | 20s | |
+| Twitch | streamlink | streamlink | 20s | |
+| YouTube | streamlink | streamlink | 20s | |
+| Stripchat | yt-dlp / Playwright | Stripchat API | 15s | |
 
 任何 streamlink 支持的平台均可通过粘贴 URL 直接添加。
 
@@ -225,6 +225,7 @@ static/styles.css  # Tailwind CSS 本地构建产物
 static/manifest.json  # PWA manifest
 static/sw.js       # Service Worker（离线缓存）
 config.json        # 配置文件（主播列表 + 设置 + Webhook + 定时计划）
+streamvideo.db     # SQLite 数据库（自动从 JSON 迁移）
 recordings/        # 录制文件输出目录
   {主播名}/
     YYYYMMDD_HHMMSS.mp4        # 录制片段
@@ -233,6 +234,18 @@ recordings/        # 录制文件输出目录
     sessions.json              # 录制会话记录
   thumbs/                      # 缩略图缓存
 ```
+
+## 已知限制
+
+### 抖音直播录制
+
+- **检测**：使用抖音原生 webcast API（`room/web/enter`），需要 `ttwid` cookie，自动获取并缓存 1 小时
+- **录制**：streamlink 的抖音插件已失效（抖音页面改为纯客户端渲染），系统会自动尝试三级 fallback：
+  1. streamlink（传入 ttwid cookie）
+  2. Playwright 提取流地址 + ffmpeg 直录
+  3. 60 秒冷却后重试
+- **反爬**：抖音 API 需要 `__ac_signature` 签名才能返回流地址，Playwright headless 模式被屏蔽
+- **后续方向**：集成第三方抖音录制库、支持用户导出浏览器 cookie
 
 ## 快捷键
 
