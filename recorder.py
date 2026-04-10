@@ -1034,11 +1034,175 @@ class DouyinRecorder(BaseLiveRecorder):
             return ModelStatus.UNKNOWN, None, 0
 
     async def _do_record(self, output_path: str) -> bool:
-        """用 streamlink 录制抖音直播"""
+        """录制抖音直播：先试 streamlink，失败则用 Playwright 提取流地址 + ffmpeg"""
         q = self.quality if self.quality != "best" else "origin"
-        return await self._record_with_streamlink(
-            output_path, self._get_stream_url(), quality=q
+
+        # 方案1: streamlink（传入 ttwid cookie）
+        ttwid = await self._get_ttwid()
+        extra_args = []
+        if ttwid:
+            extra_args = ["--http-cookie", f"ttwid={ttwid}"]
+        cmd = ["streamlink", "--hls-live-edge", "6", "--stream-segment-attempts", "3"]
+        cmd += extra_args
+        cmd += [self._get_stream_url(), q, "-o", output_path]
+
+        self._active_proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         )
+        logger.info(f"[{self.info.username}] streamlink started (pid={self._active_proc.pid})")
+        await asyncio.sleep(8)  # 给 streamlink 足够时间尝试
+        if self._active_proc.returncode is not None:
+            # streamlink 已退出（失败）
+            logger.info(f"[{self.info.username}] streamlink exited quickly, trying Playwright + ffmpeg")
+            self._active_proc = None
+
+            # 方案2: Playwright 提取流地址 + ffmpeg
+            stream_url = await self._get_stream_url_via_playwright()
+            if stream_url:
+                return await self._record_with_ffmpeg(output_path, stream_url)
+
+            # 所有方案失败，等待较长时间避免频繁重试
+            logger.warning(f"[{self.info.username}] All recording methods failed, cooling down 60s")
+            await self._sleep(60)
+            return False
+
+        # streamlink 正在运行，监控文件增长
+        return await self._monitor_streamlink(output_path)
+
+    async def _monitor_streamlink(self, output_path: str) -> bool:
+        """监控 streamlink 录制进程的文件增长"""
+        last_size = 0
+        stall_count = 0
+        last_bw_time = time.time()
+        last_bw_size = 0
+        while not self._stop_event.is_set() and self._recording_active:
+            await self._sleep(self.stall_check_interval)
+            if self._active_proc.returncode is not None:
+                break
+            if os.path.exists(output_path) and self.info.current_recording:
+                current_size = os.path.getsize(output_path)
+                self.info.current_recording.file_size = current_size
+                self.info.current_recording.duration = time.time() - self.info.current_recording.start_time
+                now = time.time()
+                dt = now - last_bw_time
+                if dt > 0:
+                    self.info.current_recording.bandwidth_kbps = max(0, (current_size - last_bw_size) * 8 / dt / 1000)
+                    last_bw_time = now
+                    last_bw_size = current_size
+                await self._notify()
+                if current_size > 0 and current_size == last_size:
+                    stall_count += 1
+                    if stall_count * self.stall_check_interval >= self.stall_timeout:
+                        logger.warning(f"[{self.info.username}] streamlink stalled")
+                        break
+                else:
+                    stall_count = 0
+                last_size = current_size
+
+        if self._active_proc and self._active_proc.returncode is None:
+            self._active_proc.terminate()
+            try:
+                await asyncio.wait_for(self._active_proc.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                self._active_proc.kill()
+        self._active_proc = None
+        return os.path.exists(output_path) and os.path.getsize(output_path) > 100_000
+
+    async def _get_stream_url_via_playwright(self) -> Optional[str]:
+        """用 Playwright 打开抖音页面，拦截流地址"""
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            logger.warning(f"[{self.info.username}] Playwright not installed")
+            return None
+
+        stream_url = None
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                context = await browser.new_context(user_agent=self.user_agent)
+                page = await context.new_page()
+
+                async def on_response(response):
+                    nonlocal stream_url
+                    url = response.url
+                    # 拦截 FLV 或 M3U8 流地址
+                    if stream_url:
+                        return
+                    if ".flv" in url and "pull" in url:
+                        stream_url = url.split("?")[0] + "?" + url.split("?")[1] if "?" in url else url
+                        logger.info(f"[{self.info.username}] Found FLV stream: {url[:80]}...")
+                    elif ".m3u8" in url and "pull" in url:
+                        stream_url = url
+                        logger.info(f"[{self.info.username}] Found HLS stream: {url[:80]}...")
+
+                page.on("response", on_response)
+
+                try:
+                    await page.goto(self._get_stream_url(), timeout=15000)
+                except Exception:
+                    pass
+
+                # 等待流地址出现（最多 15 秒）
+                for _ in range(30):
+                    if stream_url or self._stop_event.is_set():
+                        break
+                    await asyncio.sleep(0.5)
+
+                await browser.close()
+        except Exception as e:
+            logger.warning(f"[{self.info.username}] Playwright error: {e}")
+
+        return stream_url
+
+    async def _record_with_ffmpeg(self, output_path: str, stream_url: str) -> bool:
+        """用 ffmpeg 直接录制流"""
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
+            "-headers", f"User-Agent: {self.user_agent}\r\nReferer: https://live.douyin.com/\r\n",
+            "-i", stream_url,
+            "-c", "copy", "-movflags", "+faststart",
+            output_path,
+        ]
+        self._active_proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        logger.info(f"[{self.info.username}] ffmpeg recording started (pid={self._active_proc.pid})")
+
+        last_size = 0
+        stall_count = 0
+        while not self._stop_event.is_set() and self._recording_active:
+            await self._sleep(self.stall_check_interval)
+            if self._active_proc.returncode is not None:
+                break
+            if os.path.exists(output_path) and self.info.current_recording:
+                current_size = os.path.getsize(output_path)
+                self.info.current_recording.file_size = current_size
+                self.info.current_recording.duration = time.time() - self.info.current_recording.start_time
+                now = time.time()
+                if hasattr(self, '_last_bw_time'):
+                    dt = now - self._last_bw_time
+                    if dt > 0:
+                        self.info.current_recording.bandwidth_kbps = max(0, (current_size - last_size) * 8 / dt / 1000)
+                self._last_bw_time = now
+                await self._notify()
+                if current_size > 0 and current_size == last_size:
+                    stall_count += 1
+                    if stall_count * self.stall_check_interval >= self.stall_timeout:
+                        logger.warning(f"[{self.info.username}] ffmpeg stalled")
+                        break
+                else:
+                    stall_count = 0
+                last_size = current_size
+
+        if self._active_proc and self._active_proc.returncode is None:
+            self._active_proc.terminate()
+            try:
+                await asyncio.wait_for(self._active_proc.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                self._active_proc.kill()
+        self._active_proc = None
+        return os.path.exists(output_path) and os.path.getsize(output_path) > 100_000
 
 
 # ========== B站直播 ==========
