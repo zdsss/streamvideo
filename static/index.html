@@ -45,6 +45,8 @@ const _IC = {
   check_circle:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z',
   fiber_manual_record:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z',
   schedule:'M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z',
+  warning:'M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z',
+  history:'M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0013 21a9 9 0 000-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z',
   visibility:'M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z',
 };
 function _ri(root){
@@ -847,6 +849,19 @@ document.addEventListener('DOMContentLoaded',()=>{
         </select>
       </div>
       <div class="h-px bg-outline-variant/15"></div>
+      <!-- 自定义 Cookie -->
+      <div class="space-y-1">
+        <h4 class="text-sm font-semibold">浏览器 Cookie</h4>
+        <p class="text-xs text-on-surface-variant">从浏览器开发者工具复制 Cookie，用于突破平台反爬限制</p>
+        <input class="w-full bg-surface-container-high border-none text-xs rounded-md h-9 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="ttwid=xxx; __ac_nonce=xxx; ..." x-model="scheduleCookies"/>
+      </div>
+      <!-- 自定义流地址 -->
+      <div class="space-y-1">
+        <h4 class="text-sm font-semibold">自定义流地址</h4>
+        <p class="text-xs text-on-surface-variant">手动粘贴 FLV/M3U8 流地址，跳过自动检测直接录制</p>
+        <input class="w-full bg-surface-container-high border-none text-xs rounded-md h-9 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="https://pull-flv-xxx.douyincdn.com/..." x-model="scheduleStreamUrl"/>
+      </div>
+      <div class="h-px bg-outline-variant/15"></div>
       <!-- 定时开关 -->
       <div class="flex items-center justify-between">
         <h4 class="text-sm font-semibold">启用定时</h4>
@@ -929,7 +944,7 @@ function app() {
     addingModel: false, dragOver: false, fileSort: 'time', fileSearch: '', batchMode: false, selectedFiles: [],
     logEntries: [], modalStats: null,
     currentPage: 'streams', networkInfo: {}, systemInfo: {},
-    showSchedule: false, scheduleUsername: '', scheduleQuality: 'best', scheduleData: { enabled: false, start: '20:00', end: '02:00', days: [0,1,2,3,4,5,6] },
+    showSchedule: false, scheduleUsername: '', scheduleQuality: 'best', scheduleCookies: '', scheduleStreamUrl: '', scheduleData: { enabled: false, start: '20:00', end: '02:00', days: [0,1,2,3,4,5,6] },
     storageBreakdown: [],
 
     get sortedModels() {
@@ -1124,6 +1139,8 @@ function app() {
       this.scheduleUsername = username;
       const m = this.models.find(m => m.username === username);
       this.scheduleQuality = m?.quality || 'best';
+      this.scheduleCookies = m?.custom_cookies || '';
+      this.scheduleStreamUrl = m?.custom_stream_url || '';
       try {
         const r = await fetch(`/api/models/${username}/schedule`);
         if (r.ok) {
@@ -1143,6 +1160,13 @@ function app() {
           await fetch(`/api/models/${this.scheduleUsername}/quality`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quality: this.scheduleQuality }) });
           const m = this.models.find(m => m.username === this.scheduleUsername);
           if (m) m.quality = this.scheduleQuality;
+        }
+        // 保存 cookie 和流地址
+        if (this.scheduleCookies !== undefined) {
+          await fetch(`/api/models/${this.scheduleUsername}/cookies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cookies: this.scheduleCookies }) });
+        }
+        if (this.scheduleStreamUrl !== undefined) {
+          await fetch(`/api/models/${this.scheduleUsername}/stream-url`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stream_url: this.scheduleStreamUrl }) });
         }
         // 保存定时计划
         await fetch(`/api/models/${this.scheduleUsername}/schedule`, {

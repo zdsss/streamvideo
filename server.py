@@ -685,6 +685,7 @@ async def merge_recordings(username: str, req: MergeRequest):
         status = manager._active_merges.get(merge_id, {}).get("status", "unknown")
         return JSONResponse({"merge_id": merge_id, "status": status})
     except (ValueError, FileNotFoundError) as e:
+        logger.warning(f"Merge request failed for {username}: {e}")
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
@@ -847,6 +848,27 @@ async def set_model_quality(username: str, req: dict):
     save_config()
     await broadcast({"type": "model_update", "data": rec.info.to_dict()})
     return JSONResponse({"ok": True, "quality": q})
+
+
+@app.post("/api/models/{username}/cookies")
+async def set_model_cookies(username: str, req: dict):
+    """设置主播的自定义 cookie（从浏览器导出）"""
+    rec = manager.recorders.get(username)
+    if not rec:
+        return JSONResponse({"error": "主播不存在"}, status_code=404)
+    rec.custom_cookies = req.get("cookies", "")
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/models/{username}/stream-url")
+async def set_model_stream_url(username: str, req: dict):
+    """设置主播的自定义流地址"""
+    rec = manager.recorders.get(username)
+    if not rec:
+        return JSONResponse({"error": "主播不存在"}, status_code=404)
+    rec.custom_stream_url = req.get("stream_url", "")
+    logger.info(f"[{username}] Custom stream URL set: {rec.custom_stream_url[:80] if rec.custom_stream_url else 'cleared'}")
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/webhooks/test")

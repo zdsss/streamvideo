@@ -230,7 +230,10 @@ class BaseLiveRecorder:
         # 定时录制
         self.schedule: Optional[dict] = None
         # 录制质量
-        self.quality: str = "best"  # {"enabled":False,"start":"20:00","end":"02:00","days":[0,1,2,3,4,5,6]}
+        self.quality: str = "best"
+        # 用户自定义 cookie 和流地址
+        self.custom_cookies: str = ""  # 用户从浏览器导出的 cookie 字符串
+        self.custom_stream_url: str = ""  # 用户手动粘贴的流地址  # {"enabled":False,"start":"20:00","end":"02:00","days":[0,1,2,3,4,5,6]}
 
         # 会话追踪
         self._current_session: Optional[RecordingSession] = None
@@ -491,6 +494,17 @@ class BaseLiveRecorder:
                         self.info.recordings.append(rec_info)
                         logger.info(f"[{self.info.username}] Saved: {mp4_path} ({rec_info.file_size/1024/1024:.1f} MB)")
                         self._save_meta()
+
+                        # 磁盘空间预警
+                        try:
+                            free = shutil.disk_usage(str(self.output_dir)).free
+                            if free < 1024 * 1024 * 1024:  # < 1GB
+                                logger.warning(f"[{self.info.username}] Low disk space: {free/1024/1024:.0f}MB remaining")
+                                if self._manager and self._manager.webhook:
+                                    asyncio.ensure_future(self._manager.webhook.notify("disk_low", {
+                                        "username": self.info.username, "free_mb": int(free/1024/1024)}))
+                        except Exception:
+                            pass
 
                         # 追加片段到当前会话
                         if self._current_session:
@@ -948,8 +962,11 @@ class DouyinRecorder(BaseLiveRecorder):
                                 ttwid = h.split("ttwid=")[1].split(";")[0]
                                 break
                     if ttwid:
+                        first_time = not self._ttwid
                         self._ttwid = ttwid
                         self._ttwid_time = time.time()
+                        if first_time:
+                            logger.info(f"[{self.info.username}] ttwid obtained successfully")
                         return ttwid
         except Exception as e:
             logger.warning(f"[{self.info.username}] Failed to get ttwid: {e}")
@@ -988,26 +1005,33 @@ class DouyinRecorder(BaseLiveRecorder):
                 logger.warning(f"[{self.info.username}] Douyin API error: {data.get('status_code')}")
                 return await self._check_status_fallback()
 
-            room_data = data.get("data", {})
-            room_status = room_data.get("room_status", 0)
+            try:
+                room_data = data.get("data", {})
+                if not isinstance(room_data, dict):
+                    logger.warning(f"[{self.info.username}] Douyin API unexpected data type: {type(room_data)}")
+                    return await self._check_status_fallback()
+                room_status = room_data.get("room_status", 0)
 
-            # 提取主播信息
-            user = room_data.get("user", {})
-            nickname = user.get("nickname", "")
-            if nickname and not self._streamer_name:
-                self._streamer_name = nickname
-                self.info.username = nickname
-                logger.info(f"[{self.info.username}] Douyin streamer: {nickname}")
-                self._save_meta()
+                # 提取主播信息
+                user = room_data.get("user", {})
+                nickname = user.get("nickname", "")
+                if nickname and not self._streamer_name:
+                    self._streamer_name = nickname
+                    self.info.username = nickname
+                    logger.info(f"[{self.info.username}] Douyin streamer: {nickname}")
+                    self._save_meta()
 
-            # 提取头像
-            avatar = user.get("avatar_thumb", {}).get("url_list", [])
-            if avatar and not self.info.thumbnail_url:
-                self.info.thumbnail_url = avatar[0]
+                # 提取头像
+                avatar = user.get("avatar_thumb", {}).get("url_list", [])
+                if avatar and not self.info.thumbnail_url:
+                    self.info.thumbnail_url = avatar[0]
 
-            if room_status == 1:
-                return ModelStatus.PUBLIC, int(self.room_id), 0
-            return ModelStatus.OFFLINE, int(self.room_id), 0
+                if room_status == 1:
+                    return ModelStatus.PUBLIC, int(self.room_id), 0
+                return ModelStatus.OFFLINE, int(self.room_id), 0
+            except (KeyError, TypeError, AttributeError) as e:
+                logger.warning(f"[{self.info.username}] Douyin API response parse error: {e}")
+                return await self._check_status_fallback()
 
         except Exception as e:
             logger.warning(f"[{self.info.username}] Douyin API check error: {e}")
@@ -1034,14 +1058,23 @@ class DouyinRecorder(BaseLiveRecorder):
             return ModelStatus.UNKNOWN, None, 0
 
     async def _do_record(self, output_path: str) -> bool:
-        """录制抖音直播：先试 streamlink，失败则用 Playwright 提取流地址 + ffmpeg"""
+        """录制抖音直播：自定义流地址 > streamlink > Playwright+ffmpeg"""
+        # 方案0: 用户提供了自定义流地址，直接 ffmpeg 录制
+        if self.custom_stream_url:
+            logger.info(f"[{self.info.username}] Using custom stream URL")
+            return await self._record_with_ffmpeg(output_path, self.custom_stream_url)
+
         q = self.quality if self.quality != "best" else "origin"
 
-        # 方案1: streamlink（传入 ttwid cookie）
+        # 方案1: streamlink（传入 ttwid + 用户 cookie）
         ttwid = await self._get_ttwid()
         extra_args = []
-        if ttwid:
-            extra_args = ["--http-cookie", f"ttwid={ttwid}"]
+        cookie_str = f"ttwid={ttwid}" if ttwid else ""
+        if self.custom_cookies:
+            cookie_str = self.custom_cookies if not cookie_str else f"{cookie_str}; {self.custom_cookies}"
+        if cookie_str:
+            extra_args = ["--http-cookie", cookie_str]
+
         cmd = ["streamlink", "--hls-live-edge", "6", "--stream-segment-attempts", "3"]
         cmd += extra_args
         cmd += [self._get_stream_url(), q, "-o", output_path]
@@ -1050,23 +1083,20 @@ class DouyinRecorder(BaseLiveRecorder):
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         )
         logger.info(f"[{self.info.username}] streamlink started (pid={self._active_proc.pid})")
-        await asyncio.sleep(8)  # 给 streamlink 足够时间尝试
+        await asyncio.sleep(8)
         if self._active_proc.returncode is not None:
-            # streamlink 已退出（失败）
-            logger.info(f"[{self.info.username}] streamlink exited quickly, trying Playwright + ffmpeg")
             self._active_proc = None
+            logger.info(f"[{self.info.username}] streamlink failed, trying Playwright + ffmpeg")
 
             # 方案2: Playwright 提取流地址 + ffmpeg
             stream_url = await self._get_stream_url_via_playwright()
             if stream_url:
                 return await self._record_with_ffmpeg(output_path, stream_url)
 
-            # 所有方案失败，等待较长时间避免频繁重试
             logger.warning(f"[{self.info.username}] All recording methods failed, cooling down 60s")
             await self._sleep(60)
             return False
 
-        # streamlink 正在运行，监控文件增长
         return await self._monitor_streamlink(output_path)
 
     async def _monitor_streamlink(self, output_path: str) -> bool:
@@ -1651,12 +1681,19 @@ class RecorderManager:
         if self._thumb_task:
             self._thumb_task.cancel()
 
+    def _rec_to_dict(self, rec: BaseLiveRecorder) -> dict:
+        d = rec.info.to_dict()
+        d["custom_cookies"] = rec.custom_cookies or ""
+        d["custom_stream_url"] = rec.custom_stream_url or ""
+        d["schedule"] = rec.schedule
+        return d
+
     def get_all_info(self) -> list[dict]:
-        return [rec.info.to_dict() for rec in self.recorders.values()]
+        return [self._rec_to_dict(rec) for rec in self.recorders.values()]
 
     def get_model_info(self, username: str) -> Optional[dict]:
         if username in self.recorders:
-            return self.recorders[username].info.to_dict()
+            return self._rec_to_dict(self.recorders[username])
         return None
 
     def get_recordings(self, username: str) -> list[dict]:
