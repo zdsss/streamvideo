@@ -20,6 +20,11 @@ from pydantic import BaseModel
 from recorder import ModelInfo, RecorderManager, RecordingSession, RecordingState
 from database import Database
 
+
+def _safe_username(username: str) -> bool:
+    """验证 username 不含路径遍历字符"""
+    return ".." not in username and "/" not in username and "\\" not in username and username.strip() != ""
+
 # 日志
 logging.basicConfig(
     level=logging.INFO,
@@ -44,7 +49,7 @@ logging.getLogger().addHandler(_buf_handler)
 # 配置
 BASE_DIR = Path(__file__).parent
 RECORDINGS_DIR = str(BASE_DIR / "recordings")
-PROXY = "http://127.0.0.1:7890"
+PROXY = os.environ.get("SV_PROXY", "http://127.0.0.1:7890")
 CONFIG_FILE = BASE_DIR / "config.json"
 
 # 默认设置
@@ -57,6 +62,27 @@ DEFAULT_SETTINGS = {
     "h265_transcode": False,
     "cloud_upload": {},
     "webhooks": [],
+    "merge_timeout_minutes": 240,
+    "session_reuse_seconds": 30,
+    "retention_days": 0,
+    # Phase 3 新增
+    "split_by_size_mb": 0,        # 0=禁用，按文件大小自动分割（MB）
+    "split_by_duration_minutes": 0,  # 0=禁用，按时长自动分割（分钟）
+    "post_process_script": "",     # 录后脚本路径
+    "filename_template": "{username}_{date}_{duration}_merged",  # 文件名模板
+    # V2.0: 高光检测 + 片段生成
+    "danmaku_capture": True,
+    "highlight_auto_detect": False,
+    "highlight_keywords": ["上链接", "秒杀", "666", "抢到了", "买买买"],
+    "highlight_min_score": 0.6,
+    "highlight_min_duration": 15,
+    "highlight_max_duration": 60,
+    "highlight_padding_before": 5,
+    "highlight_padding_after": 3,
+    "clip_format": "vertical",
+    "clip_resolution": "1080x1920",
+    "clip_watermark": "",
+    "clip_danmaku_overlay": True,
 }
 
 # 运行时设置（从 config.json 加载）
@@ -68,14 +94,19 @@ db = Database(str(BASE_DIR / "streamvideo.db"))
 # WebSocket 连接管理
 ws_clients: set[WebSocket] = set()
 
+# 事件环形缓冲区（用于 WebSocket 断线恢复）
+_event_buffer: deque[dict] = deque(maxlen=100)
+
 
 async def broadcast(data: dict):
-    """广播消息给所有 WebSocket 客户端"""
+    """广播消息给所有 WebSocket 客户端，并缓存到事件缓冲区"""
+    data["_ts"] = time.time()
+    _event_buffer.append(data)
     if not ws_clients:
         return
     msg = json.dumps(data, ensure_ascii=False)
     dead = set()
-    for ws in ws_clients:
+    for ws in list(ws_clients):
         try:
             await ws.send_text(msg)
         except Exception:
@@ -91,7 +122,12 @@ async def on_state_change(info: ModelInfo):
 async def on_merge_update(username: str, merge_id: str, status: str, **kwargs):
     """合并状态变化回调"""
     data = {"username": username, "merge_id": merge_id, "status": status, **kwargs}
-    msg_type = "merge_done" if status == "done" else "merge_error"
+    if status == "auto_merge_done":
+        msg_type = "auto_merge_done"
+    elif status == "done":
+        msg_type = "merge_done"
+    else:
+        msg_type = "merge_error"
     await broadcast({"type": msg_type, "data": data})
 
 
@@ -103,14 +139,23 @@ async def on_merge_progress(username: str, merge_id: str, progress: float, messa
     }})
 
 
+async def on_disk_warning(username: str, free_mb: int, critical: bool):
+    """磁盘空间警告回调"""
+    await broadcast({"type": "disk_warning", "data": {
+        "username": username, "free_mb": free_mb, "critical": critical,
+    }})
+
+
 # 全局 manager
 manager = RecorderManager(
     output_dir=RECORDINGS_DIR,
     proxy=PROXY,
     on_state_change=on_state_change,
+    db=db,
 )
 manager._merge_callback = on_merge_update
 manager._merge_progress_callback = on_merge_progress
+manager._disk_warning_callback = on_disk_warning
 
 
 def load_config():
@@ -149,11 +194,23 @@ def save_config():
     """保存配置到 SQLite + JSON 备份"""
     # 保存到 SQLite
     db.set_settings(app_settings)
+    current_usernames = set()
     for key, rec in manager.recorders.items():
         db.upsert_model(rec.info.username, rec.info.live_url or rec.identifier,
                         platform=rec.info.platform, display_name=rec.info.username,
                         quality=rec.quality, auto_merge=rec.auto_merge,
                         schedule=rec.schedule)
+        current_usernames.add(rec.info.username)
+
+    # 同步删除 SQLite 中不再存在的模型
+    try:
+        db_models = db.get_models()
+        for m in db_models:
+            if m["username"] not in current_usernames:
+                db.delete_model(m["username"])
+                logger.info(f"Cleaned stale model from DB: {m['username']}")
+    except Exception as e:
+        logger.warning(f"Failed to sync-delete stale models: {e}")
 
     # JSON 备份
     models = []
@@ -217,6 +274,10 @@ async def lifespan(app: FastAPI):
     if app_settings["auto_merge"]:
         asyncio.create_task(startup_auto_merge())
 
+    # 录制保留策略定时任务
+    if app_settings.get("retention_days", 0) > 0:
+        asyncio.create_task(_retention_cleanup_loop())
+
     yield
 
     await manager.stop_all()
@@ -225,41 +286,55 @@ async def lifespan(app: FastAPI):
 
 
 async def startup_auto_merge():
-    """启动时扫描所有 sessions.json，恢复未完成的会话并触发合并"""
+    """启动时恢复未完成的会话并触发合并（使用 SQLite）"""
     await asyncio.sleep(3)  # 等待服务完全启动
     rec_path = Path(RECORDINGS_DIR)
     if not rec_path.exists():
         return
 
-    # 1. 扫描所有目录的 sessions.json，恢复 active/ended 会话
+    # 1. 从 SQLite 恢复 active/merging 会话
     for d in rec_path.iterdir():
         if not d.is_dir() or d.name in ("thumbs", "logs"):
             continue
-        sessions_path = d / "sessions.json"
-        if sessions_path.exists():
-            try:
-                with open(sessions_path) as f:
-                    sessions = [RecordingSession.from_dict(s) for s in json.load(f)]
-                changed = False
-                for s in sessions:
-                    if s.status == "active":
-                        # 服务重启，active 会话无 recorder 或 recorder 未在录制 → 标记 ended
-                        rec = manager.recorders.get(d.name)
-                        is_active = rec and rec.info.state.value in ("recording", "reconnecting")
-                        if not is_active:
-                            s.status = "ended"
-                            s.ended_at = time.time()
-                            changed = True
-                            logger.info(f"[{d.name}] Recovered orphaned session: {s.session_id}")
-                if changed:
-                    with open(sessions_path, "w") as f:
-                        json.dump([s.to_dict() for s in sessions], f, ensure_ascii=False, indent=2)
-                    # 同步到 recorder 内存
-                    rec = manager.recorders.get(d.name)
-                    if rec:
-                        rec._sessions = sessions
-            except Exception as e:
-                logger.error(f"Startup session recovery error for {d.name}: {e}")
+        username = d.name
+        try:
+            db_sessions = db.get_sessions(username)
+            if not db_sessions:
+                continue
+            sessions = [RecordingSession.from_dict(s) for s in db_sessions]
+            changed = False
+            for s in sessions:
+                if s.status == "active":
+                    rec = manager.recorders.get(username)
+                    is_active = rec and rec.info.state.value in ("recording", "reconnecting")
+                    if not is_active:
+                        s.status = "ended"
+                        s.ended_at = time.time()
+                        changed = True
+                        logger.info(f"[{username}] Recovered orphaned session: {s.session_id}")
+                elif s.status == "merging":
+                    merge_age_ref = s.merge_started_at or s.ended_at or 0
+                    if merge_age_ref and (time.time() - merge_age_ref) > 1800:
+                        s.status = "ended"
+                        s.merge_error = ""
+                        s.merge_started_at = 0
+                        changed = True
+                        # 清理残留文件
+                        for f in d.iterdir():
+                            if f.name.endswith("_merged.mp4") and f.stat().st_size == 0:
+                                f.unlink()
+                                logger.info(f"[{username}] Cleaned up empty merge output: {f.name}")
+                            elif f.name.startswith(".concat_") and f.name.endswith(".txt"):
+                                f.unlink()
+                                logger.info(f"[{username}] Cleaned up concat file: {f.name}")
+                        logger.info(f"[{username}] Reset stale merging session: {s.session_id}")
+            if changed:
+                manager._persist_sessions(username, sessions)
+                rec = manager.recorders.get(username)
+                if rec:
+                    rec._sessions = sessions
+        except Exception as e:
+            logger.error(f"Startup session recovery error for {username}: {e}")
 
     # 2. 触发所有主播的自动合并（session-aware）
     for username in list(manager.recorders.keys()):
@@ -280,17 +355,69 @@ async def startup_auto_merge():
                     logger.error(f"Startup auto-merge error for {d.name}: {e}")
 
 
+async def _retention_cleanup_loop():
+    """每日清理超过保留天数的录制文件"""
+    while True:
+        await asyncio.sleep(86400)  # 24 小时
+        days = app_settings.get("retention_days", 0)
+        if days <= 0:
+            continue
+        try:
+            await _do_retention_cleanup(days)
+        except Exception as e:
+            logger.error(f"Retention cleanup error: {e}")
+
+
+async def _do_retention_cleanup(days: int):
+    """执行保留策略清理"""
+    cutoff = time.time() - days * 86400
+    rec_path = Path(RECORDINGS_DIR)
+    if not rec_path.exists():
+        return
+    cleaned = 0
+    cleaned_size = 0
+    for d in rec_path.iterdir():
+        if not d.is_dir() or d.name in ("thumbs", "logs"):
+            continue
+        for f in d.glob("*.mp4"):
+            if ".raw." in f.name:
+                continue
+            try:
+                if f.stat().st_mtime < cutoff:
+                    size = f.stat().st_size
+                    f.unlink()
+                    cleaned += 1
+                    cleaned_size += size
+            except Exception:
+                pass
+    if cleaned > 0:
+        logger.info(f"Retention cleanup: deleted {cleaned} files ({cleaned_size/1024/1024:.1f} MB) older than {days} days")
+
+
 def apply_settings_to_recorders():
     """将全局设置应用到所有录制器"""
     manager._post_process_rename = app_settings.get("smart_rename", False)
     manager._post_process_h265 = app_settings.get("h265_transcode", False)
+    manager._merge_timeout = app_settings.get("merge_timeout_minutes", 240) * 60
+    manager._post_process_script = app_settings.get("post_process_script", "")
+    manager._filename_template = app_settings.get("filename_template", "{username}_{date}_{duration}_merged")
+    manager._highlight_auto_detect = app_settings.get("highlight_auto_detect", False)
+    manager._highlight_config = {k: v for k, v in app_settings.items() if k.startswith("highlight_")}
     manager.cloud.config = app_settings.get("cloud_upload") or None
     manager.webhook.webhooks = app_settings.get("webhooks", [])
+    reuse_window = app_settings.get("session_reuse_seconds", 30)
+    split_size = app_settings.get("split_by_size_mb", 0)
+    split_duration = app_settings.get("split_by_duration_minutes", 0)
     for rec in manager.recorders.values():
         rec.auto_merge = app_settings["auto_merge"]
         rec.info.auto_merge = app_settings["auto_merge"]
         rec.min_segment_size = app_settings["min_segment_size_kb"] * 1024
         rec.auto_delete_originals = app_settings["auto_delete_originals"]
+        rec.session_reuse_window = reuse_window
+        rec.split_by_size = split_size * 1024 * 1024 if split_size > 0 else 0
+        rec.split_by_duration = split_duration * 60 if split_duration > 0 else 0
+        if hasattr(rec, '_danmaku_enabled'):
+            rec._danmaku_enabled = app_settings.get("danmaku_capture", True)
 
 
 async def remux_stale_raw_files():
@@ -393,6 +520,8 @@ async def websocket_endpoint(ws: WebSocket):
                 await ws.send_text(json.dumps({"type": "pong"}))
     except WebSocketDisconnect:
         pass
+    except Exception as e:
+        logger.debug(f"WebSocket error: {e}")
     finally:
         ws_clients.discard(ws)
 
@@ -423,6 +552,11 @@ async def add_model(req: AddModelRequest):
 async def remove_model(username: str):
     await manager.stop_model(username)
     manager.remove_model(username)
+    # 从 SQLite 删除（关键：防止重启后复活）
+    try:
+        db.delete_model(username)
+    except Exception as e:
+        logger.warning(f"Failed to delete model from DB: {e}")
     save_config()
     await broadcast({"type": "model_removed", "data": {"username": username}})
     return JSONResponse({"ok": True})
@@ -457,14 +591,17 @@ async def get_disk_usage():
     import shutil
     rec_path = Path(RECORDINGS_DIR)
     rec_path.mkdir(parents=True, exist_ok=True)
-    # 录制目录大小
-    total_rec = sum(f.stat().st_size for f in rec_path.rglob("*") if f.is_file())
-    # 磁盘剩余空间
-    disk = shutil.disk_usage(str(rec_path))
+
+    def _scan():
+        total_rec = sum(f.stat().st_size for f in rec_path.rglob("*") if f.is_file())
+        disk = shutil.disk_usage(str(rec_path))
+        return total_rec, disk.free, disk.total
+
+    total_rec, free, total = await asyncio.to_thread(_scan)
     return JSONResponse({
         "recordings_bytes": total_rec,
-        "free_bytes": disk.free,
-        "total_bytes": disk.total,
+        "free_bytes": free,
+        "total_bytes": total,
     })
 
 
@@ -477,17 +614,22 @@ async def get_settings():
 async def get_stats():
     from datetime import datetime
     rec_path = Path(RECORDINGS_DIR)
-    total_files = 0
-    total_size = 0
-    today_files = 0
-    today = datetime.now().strftime("%Y%m%d")
-    for f in rec_path.rglob("*.mp4"):
-        if ".raw." in f.name:
-            continue
-        total_files += 1
-        total_size += f.stat().st_size
-        if f.name.startswith(today):
-            today_files += 1
+
+    def _scan():
+        total_files = 0
+        total_size = 0
+        today_files = 0
+        today = datetime.now().strftime("%Y%m%d")
+        for f in rec_path.rglob("*.mp4"):
+            if ".raw." in f.name:
+                continue
+            total_files += 1
+            total_size += f.stat().st_size
+            if f.name.startswith(today):
+                today_files += 1
+        return total_files, total_size, today_files
+
+    total_files, total_size, today_files = await asyncio.to_thread(_scan)
     return JSONResponse({
         "total_files": total_files,
         "total_size_bytes": total_size,
@@ -535,26 +677,33 @@ async def get_storage_breakdown():
     rec_path = Path(RECORDINGS_DIR)
     if not rec_path.exists():
         return JSONResponse([])
-    breakdown = []
-    for d in sorted(rec_path.iterdir()):
-        if not d.is_dir() or d.name in ("thumbs", "logs"):
-            continue
-        files = list(d.glob("*.mp4"))
-        files = [f for f in files if ".raw." not in f.name]
-        total_size = sum(f.stat().st_size for f in files)
-        merged = [f for f in files if "_merged" in f.name]
-        unmerged = [f for f in files if "_merged" not in f.name]
-        oldest = min((f.stat().st_mtime for f in files), default=0)
-        breakdown.append({
-            "username": d.name,
-            "total_size": total_size,
-            "file_count": len(files),
-            "merged_count": len(merged),
-            "unmerged_count": len(unmerged),
-            "oldest_file": oldest,
-        })
-    breakdown.sort(key=lambda x: x["total_size"], reverse=True)
-    return JSONResponse(breakdown)
+
+    def _scan():
+        breakdown = []
+        for d in sorted(rec_path.iterdir()):
+            if not d.is_dir() or d.name in ("thumbs", "logs"):
+                continue
+            files = [f for f in d.glob("*.mp4") if ".raw." not in f.name]
+            if not files:
+                continue
+            # 缓存 stat 结果，避免重复调用
+            file_stats = [(f, f.stat()) for f in files]
+            total_size = sum(st.st_size for _, st in file_stats)
+            merged_count = sum(1 for f, _ in file_stats if "_merged" in f.name)
+            oldest = min((st.st_mtime for _, st in file_stats), default=0)
+            breakdown.append({
+                "username": d.name,
+                "total_size": total_size,
+                "file_count": len(file_stats),
+                "merged_count": merged_count,
+                "unmerged_count": len(file_stats) - merged_count,
+                "oldest_file": oldest,
+            })
+        breakdown.sort(key=lambda x: x["total_size"], reverse=True)
+        return breakdown
+
+    result = await asyncio.to_thread(_scan)
+    return JSONResponse(result)
 
 
 @app.get("/api/network")
@@ -651,9 +800,13 @@ async def get_system():
 
 @app.post("/api/settings")
 async def update_settings(req: dict):
-    for key in DEFAULT_SETTINGS:
-        if key in req:
-            app_settings[key] = req[key]
+    # 白名单校验：只允许已知的设置 key
+    allowed = set(DEFAULT_SETTINGS.keys())
+    filtered = {k: v for k, v in req.items() if k in allowed}
+    if not filtered:
+        return JSONResponse({"error": "无有效设置项"}, status_code=400)
+    for key, value in filtered.items():
+        app_settings[key] = value
     apply_settings_to_recorders()
     save_config()
     await broadcast({"type": "settings_update", "data": app_settings})
@@ -673,6 +826,8 @@ async def get_recording_groups(username: str, gap: int = 15):
 
 @app.post("/api/recordings/{username}/merge")
 async def merge_recordings(username: str, req: MergeRequest):
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     if len(req.files) < 2:
         return JSONResponse({"error": "至少需要2个文件"}, status_code=400)
     for fn in req.files:
@@ -691,21 +846,30 @@ async def merge_recordings(username: str, req: MergeRequest):
 
 @app.delete("/api/recordings/{username}/{filename}")
 async def delete_recording(username: str, filename: str):
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     if ".." in filename or "/" in filename:
         return JSONResponse({"error": "invalid filename"}, status_code=400)
     video_path = Path(RECORDINGS_DIR) / username / filename
     if not video_path.exists():
         return JSONResponse({"error": "not found"}, status_code=404)
-    video_path.unlink()
+    try:
+        video_path.unlink()
+    except OSError as e:
+        return JSONResponse({"error": f"删除失败: {e}"}, status_code=500)
     return JSONResponse({"ok": True})
 
 
 @app.post("/api/recordings/{username}/{filename}/rename")
 async def rename_recording(username: str, filename: str, req: dict):
     """重命名录制文件"""
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     new_name = req.get("new_name", "").strip()
     if not new_name or ".." in new_name or "/" in new_name:
         return JSONResponse({"error": "无效的文件名"}, status_code=400)
+    if len(new_name) > 200:
+        return JSONResponse({"error": "文件名过长"}, status_code=400)
     if not new_name.endswith(".mp4"):
         new_name += ".mp4"
     if ".." in filename or "/" in filename:
@@ -716,7 +880,10 @@ async def rename_recording(username: str, filename: str, req: dict):
         return JSONResponse({"error": "文件不存在"}, status_code=404)
     if new_path.exists():
         return JSONResponse({"error": "目标文件名已存在"}, status_code=400)
-    old_path.rename(new_path)
+    try:
+        old_path.rename(new_path)
+    except OSError as e:
+        return JSONResponse({"error": f"重命名失败: {e}"}, status_code=500)
     return JSONResponse({"ok": True, "new_name": new_name})
 
 
@@ -745,6 +912,81 @@ async def export_recordings_csv(username: str):
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{username}_recordings.csv"'},
     )
+
+
+@app.post("/api/sessions/merge-all-ended")
+async def merge_all_ended_sessions():
+    """批量合并所有待合并会话"""
+    results = []
+    for username, rec in list(manager.recorders.items()):
+        sessions = manager.get_sessions(username)
+        for s in sessions:
+            if s.get("status") == "ended" and len(s.get("segments", [])) >= 2:
+                try:
+                    merge_id = await manager.merge_segments(
+                        username, s["segments"],
+                        delete_originals=app_settings.get("auto_delete_originals", True))
+                    merge_info = manager._active_merges.get(merge_id, {})
+                    manager.update_session_status(
+                        username, s["session_id"],
+                        "merged" if merge_info.get("status") == "done" else "error",
+                        merged_file=merge_info.get("filename", ""),
+                        merge_error=merge_info.get("error", ""))
+                    results.append({"username": username, "session_id": s["session_id"],
+                                    "status": merge_info.get("status", "unknown")})
+                except Exception as e:
+                    manager.update_session_status(username, s["session_id"], "error", merge_error=str(e))
+                    results.append({"username": username, "session_id": s["session_id"],
+                                    "status": "error", "error": str(e)})
+    return JSONResponse({"merged": len(results), "results": results})
+
+
+@app.post("/api/sessions/cleanup")
+async def cleanup_stale_sessions():
+    """清理卡住的会话（merging>1h → ended, orphaned active → ended）"""
+    fixed = 0
+    now = time.time()
+    for username, rec in list(manager.recorders.items()):
+        for s in rec._sessions:
+            if s.status == "merging":
+                merge_age_ref = s.merge_started_at or s.ended_at or 0
+                if merge_age_ref and (now - merge_age_ref) > 1800:
+                    s.status = "ended"
+                    s.merge_error = ""
+                    s.merge_started_at = 0
+                    fixed += 1
+            elif s.status == "active" and rec.info.state not in ("recording", "reconnecting"):
+                if s.started_at and (now - s.started_at) > 7200:
+                    s.status = "ended"
+                    s.ended_at = now
+                    fixed += 1
+        if fixed:
+            rec._save_sessions()
+    return JSONResponse({"fixed": fixed})
+
+
+@app.post("/api/recordings/cleanup-merged")
+async def cleanup_merged_originals():
+    """清理所有已合并的原始片段文件"""
+    cleaned = 0
+    cleaned_size = 0
+    for username, rec in list(manager.recorders.items()):
+        sessions = manager.get_sessions(username)
+        model_dir = Path(RECORDINGS_DIR) / username
+        for s in sessions:
+            if s.get("status") != "merged" or not s.get("merged_file"):
+                continue
+            merged_path = model_dir / s["merged_file"]
+            if not merged_path.exists():
+                continue
+            for fn in s.get("segments", []):
+                fp = model_dir / fn
+                if fp.exists() and fp.name != s["merged_file"]:
+                    cleaned_size += fp.stat().st_size
+                    fp.unlink()
+                    cleaned += 1
+    return JSONResponse({"cleaned": cleaned, "freed_bytes": cleaned_size,
+                         "freed_mb": round(cleaned_size / 1024 / 1024, 1)})
 
 
 @app.get("/api/recordings/{username}")
@@ -816,13 +1058,40 @@ async def toggle_model_auto_merge(username: str, req: dict):
     return JSONResponse({"ok": True, "auto_merge": enabled})
 
 
+@app.get("/api/merge-history/{username}")
+async def get_merge_history(username: str):
+    """获取指定主播的合并历史"""
+    if not _safe_username(username):
+        return JSONResponse({"error": "无效用户名"}, status_code=400)
+    history = db.get_merge_history(username)
+    return JSONResponse(history)
+
+
+@app.get("/api/stats/daily")
+async def get_daily_stats(days: int = 30):
+    """获取每日录制统计"""
+    stats = db.get_daily_stats(days)
+    return JSONResponse(stats)
+
+
 @app.post("/api/models/{username}/schedule")
 async def set_model_schedule(username: str, req: dict):
     """设置主播的定时录制计划"""
     rec = manager.recorders.get(username)
     if not rec:
         return JSONResponse({"error": "主播不存在"}, status_code=404)
-    rec.schedule = req.get("schedule")
+    schedule = req.get("schedule")
+    if schedule:
+        # 验证 schedule 格式
+        if not isinstance(schedule, dict):
+            return JSONResponse({"error": "schedule 格式无效"}, status_code=400)
+        if "start" in schedule and not isinstance(schedule["start"], str):
+            return JSONResponse({"error": "start 必须是时间字符串 (HH:MM)"}, status_code=400)
+        if "end" in schedule and not isinstance(schedule["end"], str):
+            return JSONResponse({"error": "end 必须是时间字符串 (HH:MM)"}, status_code=400)
+        if "days" in schedule and not isinstance(schedule["days"], list):
+            return JSONResponse({"error": "days 必须是数组"}, status_code=400)
+    rec.schedule = schedule
     save_config()
     return JSONResponse({"ok": True, "schedule": rec.schedule})
 
@@ -843,6 +1112,9 @@ async def set_model_quality(username: str, req: dict):
     if not rec:
         return JSONResponse({"error": "主播不存在"}, status_code=404)
     q = req.get("quality", "best")
+    allowed = {"best", "1080p", "720p", "480p", "audio_only", "origin", "worst"}
+    if q not in allowed:
+        return JSONResponse({"error": f"无效的质量选项，可选: {', '.join(sorted(allowed))}"}, status_code=400)
     rec.quality = q
     rec.info.quality = q
     save_config()
@@ -874,12 +1146,17 @@ async def set_model_stream_url(username: str, req: dict):
 @app.post("/api/webhooks/test")
 async def test_webhook(req: dict):
     """测试 webhook 连通性"""
-    ok = await manager.webhook.test(req)
-    return JSONResponse({"ok": ok})
+    try:
+        ok = await manager.webhook.test(req)
+        return JSONResponse({"ok": ok})
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
 
 @app.get("/api/thumb/{username}")
 async def get_thumbnail(username: str):
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     thumb_path = Path(RECORDINGS_DIR) / "thumbs" / f"{username}.jpg"
     if thumb_path.exists():
         return FileResponse(
@@ -892,6 +1169,8 @@ async def get_thumbnail(username: str):
 
 @app.get("/api/video/{username}/{filename}")
 async def get_video(username: str, filename: str, download: int = 0):
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     if ".." in filename or "/" in filename:
         return JSONResponse({"error": "invalid filename"}, status_code=400)
     video_path = Path(RECORDINGS_DIR) / username / filename
@@ -903,6 +1182,932 @@ async def get_video(username: str, filename: str, download: int = 0):
             )
         return FileResponse(str(video_path), media_type="video/mp4")
     return JSONResponse({"error": "not found"}, status_code=404)
+
+
+# ========== 新增 API: 合并取消 / 批量重试 / 健康检查 / 保留策略 / 合并统计 ==========
+
+@app.post("/api/recordings/{username}/merge/{merge_id}/cancel")
+async def cancel_merge(username: str, merge_id: str):
+    """取消正在运行的合并任务"""
+    ok = await manager.cancel_merge(merge_id)
+    if ok:
+        # 回退对应 session 状态
+        for s_dict in manager.get_sessions(username):
+            if s_dict.get("status") == "merging":
+                manager.update_session_status(username, s_dict["session_id"], "ended", merge_error="")
+        return JSONResponse({"ok": True})
+    return JSONResponse({"error": "合并任务不存在或已完成"}, status_code=400)
+
+
+@app.post("/api/sessions/retry-failed")
+async def retry_failed_sessions():
+    """批量重试所有失败的合并会话"""
+    retried = 0
+    for username, rec in list(manager.recorders.items()):
+        for s in rec._sessions:
+            if s.status == "error" and s.retry_count < 3 and len(s.segments) >= 2:
+                s.status = "ended"
+                s.merge_error = ""
+                retried += 1
+        if retried:
+            rec._save_sessions()
+    # 触发自动合并
+    for username in list(manager.recorders.keys()):
+        try:
+            await manager.auto_merge_for_model(username)
+        except Exception as e:
+            logger.error(f"Retry-failed merge error for {username}: {e}")
+    return JSONResponse({"retried": retried})
+
+
+@app.get("/api/recordings/{username}/health")
+async def health_check_recordings(username: str):
+    """对指定主播的所有录制文件执行健康检查"""
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
+    model_dir = Path(RECORDINGS_DIR) / username
+    if not model_dir.exists():
+        return JSONResponse([])
+
+    async def _probe(fp: Path) -> dict:
+        result = {"filename": fp.name, "size": fp.stat().st_size, "valid": False,
+                  "duration": 0, "codec": "", "resolution": ""}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name,width,height,duration",
+                "-of", "json", str(fp),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            data = json.loads(stdout.decode())
+            streams = data.get("streams", [])
+            if streams:
+                s = streams[0]
+                result["codec"] = s.get("codec_name", "")
+                result["resolution"] = f"{s.get('width', 0)}x{s.get('height', 0)}"
+                result["duration"] = float(s.get("duration", 0) or 0)
+                result["valid"] = result["duration"] > 0
+        except Exception:
+            pass
+        return result
+
+    files = sorted(model_dir.glob("*.mp4"))
+    files = [f for f in files if ".raw." not in f.name]
+    results = await asyncio.gather(*[_probe(f) for f in files])
+    return JSONResponse(list(results))
+
+
+@app.post("/api/recordings/cleanup-old")
+async def cleanup_old_recordings():
+    """手动触发保留策略清理"""
+    days = app_settings.get("retention_days", 0)
+    if days <= 0:
+        return JSONResponse({"error": "retention_days 未设置或为 0"}, status_code=400)
+    await _do_retention_cleanup(days)
+    return JSONResponse({"ok": True, "retention_days": days})
+
+
+@app.get("/api/stats/merge-savings")
+async def get_merge_savings():
+    """获取合并节省的存储空间统计"""
+    history = db.get_all_merge_history(limit=1000)
+    total_savings = sum(h.get("savings_bytes", 0) for h in history)
+    total_merges = len([h for h in history if h.get("status") == "done"])
+    total_input = sum(h.get("input_size", 0) for h in history if h.get("status") == "done")
+    avg_ratio = round((1 - (total_input - total_savings) / total_input) * 100, 1) if total_input > 0 else 0
+    return JSONResponse({
+        "total_savings_bytes": total_savings,
+        "total_savings_mb": round(total_savings / 1024 / 1024, 1),
+        "total_merges": total_merges,
+        "avg_compression_pct": avg_ratio,
+    })
+
+
+@app.get("/api/merge-history")
+async def get_all_merge_history(limit: int = 50):
+    """获取全局合并历史"""
+    history = db.get_all_merge_history(limit=limit)
+    return JSONResponse(history)
+
+
+# ========== Phase 2: 合并预览 / 事件缓冲 ==========
+
+
+@app.post("/api/recordings/{username}/merge/preview")
+async def merge_preview(username: str, req: dict):
+    """合并预览/Dry-Run：返回 segment 详情、codec 一致性、预估输出"""
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
+    filenames = req.get("files", [])
+    if not filenames:
+        # 默认预览所有 ended session 的 segments
+        sessions = manager.get_sessions(username)
+        for s in sessions:
+            if s.get("status") == "ended" and len(s.get("segments", [])) >= 2:
+                filenames = s["segments"]
+                break
+    if len(filenames) < 2:
+        return JSONResponse({"error": "至少需要2个文件"}, status_code=400)
+
+    model_dir = Path(RECORDINGS_DIR) / username
+    segments = []
+    total_size = 0
+    total_duration = 0
+    warnings = []
+
+    for fn in filenames:
+        fp = model_dir / fn
+        if not fp.exists():
+            warnings.append(f"文件缺失: {fn}")
+            continue
+        info = {"filename": fn, "size": fp.stat().st_size, "codec": "", "resolution": "",
+                "duration": 0, "valid": False}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name,width,height,duration",
+                "-of", "json", str(fp),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            data = json.loads(stdout.decode())
+            streams = data.get("streams", [])
+            if streams:
+                s = streams[0]
+                info["codec"] = s.get("codec_name", "")
+                info["resolution"] = f"{s.get('width', 0)}x{s.get('height', 0)}"
+                info["duration"] = float(s.get("duration", 0) or 0)
+                info["valid"] = info["duration"] > 0
+        except Exception:
+            pass
+        segments.append(info)
+        total_size += info["size"]
+        total_duration += info["duration"]
+
+    # 检查 codec 一致性
+    codecs = set(f"{s['codec']}_{s['resolution']}" for s in segments if s["valid"])
+    codec_consistent = len(codecs) <= 1
+    if not codec_consistent:
+        warnings.append(f"编码不一致: {' vs '.join(sorted(codecs))}（将自动重编码）")
+
+    invalid = [s["filename"] for s in segments if not s["valid"]]
+    if invalid:
+        warnings.append(f"损坏片段: {', '.join(invalid)}")
+
+    return JSONResponse({
+        "segments": segments,
+        "total_size": total_size,
+        "total_duration": total_duration,
+        "estimated_output_size": total_size,  # copy 模式大小基本不变
+        "codec_consistent": codec_consistent,
+        "warnings": warnings,
+        "segment_count": len([s for s in segments if s["valid"]]),
+    })
+
+
+@app.get("/api/events/since")
+async def get_events_since(ts: float = 0):
+    """获取指定时间戳之后的事件（用于 WebSocket 断线恢复）"""
+    events = [e for e in _event_buffer if e.get("_ts", 0) > ts]
+    return JSONResponse(events)
+
+
+# ========== Phase 3: 配置导入导出 / 缩略图 / 录后脚本 ==========
+
+@app.get("/api/config/export")
+async def export_config():
+    """导出配置（设置 + 主播列表）"""
+    models = []
+    for key, rec in manager.recorders.items():
+        models.append({
+            "url": rec.info.live_url or rec.identifier,
+            "name": rec.info.username,
+            "platform": rec.info.platform,
+            "quality": rec.quality,
+            "auto_merge": rec.auto_merge,
+            "schedule": rec.schedule,
+        })
+    export_data = {
+        "version": 2,
+        "exported_at": time.time(),
+        "settings": {k: v for k, v in app_settings.items()},
+        "models": models,
+    }
+    return JSONResponse(export_data)
+
+
+@app.post("/api/config/import")
+async def import_config(req: dict):
+    """导入配置"""
+    if "settings" not in req and "models" not in req:
+        return JSONResponse({"error": "无效的配置格式"}, status_code=400)
+
+    imported_settings = 0
+    imported_models = 0
+
+    # 导入设置
+    if "settings" in req:
+        allowed = set(DEFAULT_SETTINGS.keys())
+        for k, v in req["settings"].items():
+            if k in allowed:
+                app_settings[k] = v
+                imported_settings += 1
+        apply_settings_to_recorders()
+
+    # 导入主播
+    if "models" in req:
+        for m in req["models"]:
+            url = m.get("url", "")
+            if not url:
+                continue
+            # 跳过已存在的
+            existing = False
+            for rec in manager.recorders.values():
+                if rec.info.live_url == url or rec.identifier == url:
+                    existing = True
+                    break
+            if existing:
+                continue
+            try:
+                info = manager.add_model(url)
+                key = info.username
+                rec = manager.recorders.get(key)
+                if rec:
+                    if m.get("schedule"):
+                        rec.schedule = m["schedule"]
+                    if m.get("quality"):
+                        rec.quality = m["quality"]
+                        rec.info.quality = m["quality"]
+                    if "auto_merge" in m:
+                        rec.auto_merge = m["auto_merge"]
+                        rec.info.auto_merge = m["auto_merge"]
+                await manager.start_model(key)
+                imported_models += 1
+            except Exception as e:
+                logger.warning(f"Import model failed for {url}: {e}")
+
+    save_config()
+    await broadcast({"type": "settings_update", "data": app_settings})
+    return JSONResponse({
+        "ok": True,
+        "imported_settings": imported_settings,
+        "imported_models": imported_models,
+    })
+
+
+@app.post("/api/recordings/{username}/{filename}/thumbnail")
+async def generate_thumbnail(username: str, filename: str):
+    """从录制文件生成缩略图"""
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
+    if ".." in filename or "/" in filename:
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
+    video_path = Path(RECORDINGS_DIR) / username / filename
+    if not video_path.exists():
+        return JSONResponse({"error": "文件不存在"}, status_code=404)
+
+    thumbs_dir = Path(RECORDINGS_DIR) / "thumbs"
+    thumbs_dir.mkdir(parents=True, exist_ok=True)
+    thumb_name = f"{username}_{filename.replace('.mp4', '')}.jpg"
+    thumb_path = thumbs_dir / thumb_name
+
+    try:
+        # 提取 10% 位置的帧
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+            "-of", "json", str(video_path),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        data = json.loads(stdout.decode())
+        duration = float(data.get("format", {}).get("duration", 0) or 0)
+        seek_time = max(1, duration * 0.1)
+
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-ss", str(seek_time),
+            "-i", str(video_path),
+            "-vframes", "1", "-vf", "scale=320:-1",
+            str(thumb_path),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=30)
+
+        if thumb_path.exists():
+            return JSONResponse({
+                "ok": True,
+                "thumbnail_url": f"/api/thumb/file/{username}/{thumb_name}",
+            })
+        return JSONResponse({"error": "缩略图生成失败"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/thumb/file/{username}/{thumb_name}")
+async def get_file_thumbnail(username: str, thumb_name: str):
+    """获取录制文件的缩略图"""
+    if not _safe_username(username) or ".." in thumb_name:
+        return JSONResponse({"error": "invalid"}, status_code=400)
+    thumb_path = Path(RECORDINGS_DIR) / "thumbs" / thumb_name
+    if thumb_path.exists():
+        return FileResponse(str(thumb_path), media_type="image/jpeg",
+                            headers={"Cache-Control": "max-age=3600"})
+    return JSONResponse({"error": "not found"}, status_code=404)
+
+
+@app.post("/api/post-script/test")
+async def test_post_script(req: dict):
+    """测试录后脚本（dry-run）"""
+    script = req.get("script", "").strip()
+    if not script:
+        return JSONResponse({"error": "脚本路径为空"}, status_code=400)
+    script_path = Path(script)
+    if not script_path.exists():
+        return JSONResponse({"error": f"脚本不存在: {script}"}, status_code=400)
+    if not os.access(str(script_path), os.X_OK):
+        return JSONResponse({"error": f"脚本无执行权限: {script}"}, status_code=400)
+    # 模拟执行
+    env = {
+        **os.environ,
+        "SV_USERNAME": "test_user",
+        "SV_FILE_PATH": "/tmp/test_recording.mp4",
+        "SV_FILE_SIZE": "1048576",
+        "SV_PLATFORM": "test",
+        "SV_SESSION_ID": "s_test_000000",
+        "SV_EVENT": "test",
+    }
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            str(script_path),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        return JSONResponse({
+            "ok": proc.returncode == 0,
+            "exit_code": proc.returncode,
+            "stdout": stdout.decode()[:500],
+            "stderr": stderr.decode()[:500],
+        })
+    except asyncio.TimeoutError:
+        return JSONResponse({"error": "脚本执行超时 (30s)"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ========== V2.0: 高光检测 + 片段生成 API ==========
+
+@app.post("/api/highlights/{username}/detect")
+async def detect_highlights(username: str, req: dict = {}):
+    """触发高光检测"""
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
+    filename = req.get("filename", "")
+    session_id = req.get("session_id", "")
+    if not filename:
+        # 自动选择最新的合并文件
+        files = manager.get_recordings(username)
+        merged = [f for f in files if "_merged" in f["filename"]]
+        if merged:
+            filename = merged[0]["filename"]
+        elif files:
+            filename = files[0]["filename"]
+    if not filename:
+        return JSONResponse({"error": "无可检测的录制文件"}, status_code=400)
+
+    video_path = Path(RECORDINGS_DIR) / username / filename
+    if not video_path.exists():
+        return JSONResponse({"error": f"文件不存在: {filename}"}, status_code=404)
+
+    try:
+        from highlight import HighlightDetector
+        config = {k: v for k, v in app_settings.items() if k.startswith("highlight_")}
+        detector = HighlightDetector(config)
+
+        # 查找弹幕文件
+        danmaku_path = None
+        if session_id:
+            dp = video_path.parent / f"{session_id}_danmaku.json"
+            if dp.exists():
+                danmaku_path = dp
+        if not danmaku_path:
+            # 尝试匹配任何弹幕文件
+            for dp in video_path.parent.glob("*_danmaku.json"):
+                danmaku_path = dp
+                break
+
+        highlights = await detector.detect(video_path, danmaku_path)
+
+        # 存入数据库
+        import uuid as _uuid
+        results = []
+        for h in highlights:
+            hid = f"h_{int(time.time())}_{_uuid.uuid4().hex[:6]}"
+            db.insert_highlight(
+                highlight_id=hid, session_id=session_id, username=username,
+                video_file=filename, start_time=h.start_time, end_time=h.end_time,
+                score=h.score, category=h.category, signals=h.signals, title=h.title,
+            )
+            results.append({
+                "highlight_id": hid, "start_time": h.start_time, "end_time": h.end_time,
+                "score": h.score, "category": h.category, "title": h.title,
+            })
+
+        await broadcast({"type": "highlight_detected", "data": {
+            "username": username, "count": len(results), "video_file": filename}})
+        return JSONResponse({"ok": True, "highlights": results, "count": len(results)})
+    except Exception as e:
+        logger.error(f"Highlight detection error for {username}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/highlights/{username}")
+async def get_highlights(username: str, limit: int = 50):
+    """列出高光"""
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
+    return JSONResponse(db.get_highlights(username, limit))
+
+
+@app.delete("/api/highlights/item/{highlight_id}")
+async def delete_highlight(highlight_id: str):
+    """删除高光"""
+    db.delete_highlight(highlight_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/highlights/item/{highlight_id}/clip")
+async def generate_clip_from_highlight(highlight_id: str, req: dict = {}):
+    """从高光生成片段"""
+    h = db.get_highlight(highlight_id)
+    if not h:
+        return JSONResponse({"error": "高光不存在"}, status_code=404)
+
+    username = h["username"]
+    video_path = Path(RECORDINGS_DIR) / username / h["video_file"]
+    if not video_path.exists():
+        return JSONResponse({"error": f"视频文件不存在: {h['video_file']}"}, status_code=404)
+
+    # 查找弹幕文件
+    danmaku_path = None
+    if h.get("session_id"):
+        dp = video_path.parent / f"{h['session_id']}_danmaku.json"
+        if dp.exists():
+            danmaku_path = dp
+
+    from clipgen import ClipGenerator, ClipConfig
+    config = ClipConfig(
+        resolution=req.get("resolution", app_settings.get("clip_resolution", "1080x1920")),
+        format=req.get("format", app_settings.get("clip_format", "vertical")),
+        watermark=req.get("watermark", app_settings.get("clip_watermark", "")),
+        danmaku_overlay=app_settings.get("clip_danmaku_overlay", True),
+    )
+    gen = ClipGenerator(config, RECORDINGS_DIR)
+    result = await gen.generate_clip(video_path, h, danmaku_path)
+
+    if result.get("status") == "done":
+        db.insert_clip(
+            clip_id=result["clip_id"], highlight_id=highlight_id, username=username,
+            output_file=result.get("output_file", ""), resolution=result.get("resolution", ""),
+            duration=result.get("duration", 0), format=result.get("format", ""),
+            size=result.get("size", 0), status="done",
+        )
+        db.update_highlight_status(highlight_id, "clipped")
+        await broadcast({"type": "clip_done", "data": {
+            "username": username, "clip_id": result["clip_id"], "filename": result.get("filename", "")}})
+    return JSONResponse(result)
+
+
+@app.post("/api/highlights/batch-clip")
+async def batch_generate_clips(req: dict):
+    """批量生成片段"""
+    highlight_ids = req.get("highlight_ids", [])
+    if not highlight_ids:
+        return JSONResponse({"error": "未选择高光"}, status_code=400)
+
+    from clipgen import ClipGenerator, ClipConfig
+    config = ClipConfig(
+        resolution=req.get("resolution", app_settings.get("clip_resolution", "1080x1920")),
+        format=req.get("format", app_settings.get("clip_format", "vertical")),
+        watermark=req.get("watermark", app_settings.get("clip_watermark", "")),
+        danmaku_overlay=app_settings.get("clip_danmaku_overlay", True),
+    )
+    gen = ClipGenerator(config, RECORDINGS_DIR)
+
+    results = []
+    for i, hid in enumerate(highlight_ids):
+        h = db.get_highlight(hid)
+        if not h:
+            continue
+        username = h["username"]
+        video_path = Path(RECORDINGS_DIR) / username / h["video_file"]
+        if not video_path.exists():
+            continue
+
+        danmaku_path = None
+        if h.get("session_id"):
+            dp = video_path.parent / f"{h['session_id']}_danmaku.json"
+            if dp.exists():
+                danmaku_path = dp
+
+        await broadcast({"type": "clip_progress", "data": {
+            "username": username, "current": i + 1, "total": len(highlight_ids)}})
+
+        result = await gen.generate_clip(video_path, h, danmaku_path)
+        if result.get("status") == "done":
+            db.insert_clip(
+                clip_id=result["clip_id"], highlight_id=hid, username=username,
+                output_file=result.get("output_file", ""), resolution=result.get("resolution", ""),
+                duration=result.get("duration", 0), format=result.get("format", ""),
+                size=result.get("size", 0), status="done",
+            )
+            db.update_highlight_status(hid, "clipped")
+        results.append(result)
+
+    done = sum(1 for r in results if r.get("status") == "done")
+    return JSONResponse({"ok": True, "total": len(results), "done": done, "results": results})
+
+
+@app.get("/api/clips/{username}")
+async def get_clips(username: str, limit: int = 50):
+    """列出片段"""
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
+    return JSONResponse(db.get_clips(username, limit))
+
+
+@app.get("/api/clips/file/{username}/{filename}")
+async def get_clip_file(username: str, filename: str, download: int = 0):
+    """播放/下载片段"""
+    if not _safe_username(username) or ".." in filename:
+        return JSONResponse({"error": "invalid"}, status_code=400)
+    clip_path = Path(RECORDINGS_DIR) / username / "clips" / filename
+    if clip_path.exists():
+        if download:
+            return FileResponse(str(clip_path), media_type="video/mp4",
+                                headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        return FileResponse(str(clip_path), media_type="video/mp4")
+    return JSONResponse({"error": "not found"}, status_code=404)
+
+
+@app.delete("/api/clips/item/{clip_id}")
+async def delete_clip(clip_id: str):
+    """删除片段"""
+    clip = db.get_clip(clip_id)
+    if clip and clip.get("output_file"):
+        fp = Path(RECORDINGS_DIR) / clip["output_file"]
+        if fp.exists():
+            fp.unlink()
+    db.delete_clip(clip_id)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/highlight-rules")
+async def get_highlight_rules(username: str = ""):
+    """获取高光规则"""
+    return JSONResponse(db.get_highlight_rules(username))
+
+
+@app.post("/api/highlight-rules")
+async def upsert_highlight_rule(req: dict):
+    """创建/更新高光规则"""
+    rule_id = req.get("rule_id")
+    db.upsert_highlight_rule(rule_id, **{k: v for k, v in req.items() if k != "rule_id"})
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/highlight-rules/{rule_id}")
+async def delete_highlight_rule(rule_id: int):
+    """删除高光规则"""
+    db.delete_highlight_rule(rule_id)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/danmaku/{session_id}")
+async def get_danmaku(session_id: str):
+    """获取弹幕数据"""
+    dm = db.get_danmaku(session_id)
+    if not dm:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # 加载完整弹幕文件
+    if dm.get("file_path") and Path(dm["file_path"]).exists():
+        with open(dm["file_path"], encoding="utf-8") as f:
+            full_data = json.load(f)
+        dm["messages"] = full_data.get("messages", [])
+        dm["stats"] = full_data.get("stats", {})
+    return JSONResponse(dm)
+
+
+@app.get("/api/danmaku/{session_id}/timeline")
+async def get_danmaku_timeline(session_id: str, window: int = 10):
+    """获取弹幕密度时间线"""
+    dm = db.get_danmaku(session_id)
+    if not dm or not dm.get("file_path"):
+        return JSONResponse([])
+    fp = Path(dm["file_path"])
+    if not fp.exists():
+        return JSONResponse([])
+    try:
+        with open(fp, encoding="utf-8") as f:
+            data = json.load(f)
+        messages = data.get("messages", [])
+        chat_msgs = [m for m in messages if m.get("type") == "chat"]
+        if not chat_msgs:
+            return JSONResponse([])
+        max_t = max(m["t"] for m in chat_msgs)
+        timeline = []
+        for t in range(0, int(max_t) + 1, window):
+            count = sum(1 for m in chat_msgs if t <= m["t"] < t + window)
+            timeline.append({"t": t, "density": round(count / window, 2), "count": count})
+        return JSONResponse(timeline)
+    except Exception:
+        return JSONResponse([])
+
+
+@app.get("/api/analytics/highlights")
+async def get_highlight_analytics(username: str = "", days: int = 30):
+    """高光分析统计"""
+    highlights = db.get_all_highlights(limit=500) if not username else db.get_highlights(username, 500)
+    total = len(highlights)
+    by_category = {}
+    by_score = {"high": 0, "medium": 0, "low": 0}
+    for h in highlights:
+        cat = h.get("category", "unknown")
+        by_category[cat] = by_category.get(cat, 0) + 1
+        score = h.get("score", 0)
+        if score >= 0.8:
+            by_score["high"] += 1
+        elif score >= 0.5:
+            by_score["medium"] += 1
+        else:
+            by_score["low"] += 1
+    return JSONResponse({
+        "total": total, "by_category": by_category, "by_score": by_score,
+    })
+
+
+@app.get("/api/analytics/clips")
+async def get_clip_analytics(username: str = ""):
+    """片段分析统计"""
+    stats = db.get_clip_stats(username)
+    return JSONResponse(stats)
+
+
+# ========== V2.0 扩展: 手动片段 + ZIP + 元数据 + 导出 ==========
+
+@app.post("/api/clips/manual")
+async def create_manual_clip(req: dict):
+    """手动指定时间范围生成片段（不依赖高光检测）"""
+    username = req.get("username", "")
+    filename = req.get("filename", "")
+    start_time = req.get("start_time", 0)
+    end_time = req.get("end_time", 0)
+    if not username or not filename or end_time <= start_time:
+        return JSONResponse({"error": "参数无效"}, status_code=400)
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
+
+    video_path = Path(RECORDINGS_DIR) / username / filename
+    if not video_path.exists():
+        return JSONResponse({"error": f"文件不存在: {filename}"}, status_code=404)
+
+    # 构造虚拟 highlight
+    import uuid as _uuid
+    highlight = {
+        "highlight_id": f"manual_{int(time.time())}",
+        "username": username,
+        "video_file": filename,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+
+    # 查找弹幕文件
+    danmaku_path = None
+    for dp in video_path.parent.glob("*_danmaku.json"):
+        danmaku_path = dp
+        break
+
+    from clipgen import ClipGenerator, ClipConfig
+    config = ClipConfig(
+        resolution=req.get("resolution", app_settings.get("clip_resolution", "1080x1920")),
+        format=req.get("format", app_settings.get("clip_format", "vertical")),
+        watermark=app_settings.get("clip_watermark", ""),
+        danmaku_overlay=app_settings.get("clip_danmaku_overlay", True),
+    )
+    gen = ClipGenerator(config, RECORDINGS_DIR)
+    result = await gen.generate_clip(video_path, highlight, danmaku_path)
+
+    if result.get("status") == "done":
+        title = req.get("title", f"手动片段 {int(start_time//60)}:{int(start_time%60):02d}")
+        db.insert_clip(
+            clip_id=result["clip_id"], highlight_id="", username=username,
+            output_file=result.get("output_file", ""), resolution=result.get("resolution", ""),
+            duration=result.get("duration", 0), format=result.get("format", ""),
+            size=result.get("size", 0), status="done",
+        )
+        # 更新标题
+        db.update_clip_status(result["clip_id"], "done", title=title)
+        await broadcast({"type": "clip_done", "data": {
+            "username": username, "clip_id": result["clip_id"], "filename": result.get("filename", "")}})
+    return JSONResponse(result)
+
+
+@app.post("/api/clips/item/{clip_id}/metadata")
+async def update_clip_metadata(clip_id: str, req: dict):
+    """更新片段元数据（标题/描述/标签）"""
+    clip = db.get_clip(clip_id)
+    if not clip:
+        return JSONResponse({"error": "片段不存在"}, status_code=404)
+    kwargs = {}
+    if "title" in req:
+        kwargs["title"] = req["title"]
+    if "description" in req:
+        kwargs["description"] = req["description"]
+    if "tags" in req:
+        kwargs["tags"] = req["tags"]
+    if kwargs:
+        db.update_clip_status(clip_id, clip.get("status", "done"), **kwargs)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/clips/download-zip")
+async def download_clips_zip(req: dict):
+    """批量下载片段为 ZIP"""
+    clip_ids = req.get("clip_ids", [])
+    if not clip_ids:
+        return JSONResponse({"error": "未选择片段"}, status_code=400)
+
+    import io
+    import zipfile
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as zf:
+        for cid in clip_ids:
+            clip = db.get_clip(cid)
+            if not clip or not clip.get("output_file"):
+                continue
+            fp = Path(RECORDINGS_DIR) / clip["output_file"]
+            if fp.exists():
+                arcname = fp.name
+                if clip.get("title"):
+                    safe_title = "".join(c for c in clip["title"] if c.isalnum() or c in " _-").strip()
+                    if safe_title:
+                        arcname = f"{safe_title}.mp4"
+                zf.write(fp, arcname)
+    buffer.seek(0)
+    from starlette.responses import StreamingResponse
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="clips_{int(time.time())}.zip"'},
+    )
+
+
+@app.post("/api/clips/item/{clip_id}/export-local")
+async def export_clip_local(clip_id: str, req: dict = {}):
+    """导出片段到本地目录"""
+    clip = db.get_clip(clip_id)
+    if not clip or not clip.get("output_file"):
+        return JSONResponse({"error": "片段不存在"}, status_code=404)
+    export_dir = req.get("export_dir", "") or app_settings.get("clip_export_dir", "")
+    if not export_dir:
+        return JSONResponse({"error": "未设置导出目录"}, status_code=400)
+    export_path = Path(export_dir)
+    if not export_path.exists():
+        try:
+            export_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            return JSONResponse({"error": f"无法创建目录: {e}"}, status_code=400)
+
+    src = Path(RECORDINGS_DIR) / clip["output_file"]
+    if not src.exists():
+        return JSONResponse({"error": "源文件不存在"}, status_code=404)
+
+    import shutil
+    dest_name = src.name
+    if clip.get("title"):
+        safe_title = "".join(c for c in clip["title"] if c.isalnum() or c in " _-").strip()
+        if safe_title:
+            dest_name = f"{safe_title}.mp4"
+    dest = export_path / dest_name
+    try:
+        shutil.copy2(str(src), str(dest))
+        db.update_clip_status(clip_id, "exported", export_url=str(dest))
+        return JSONResponse({"ok": True, "exported_to": str(dest)})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ========== FlashCut V3.0 API ==========
+
+@app.get("/api/quota/{username}")
+async def get_quota(username: str):
+    """查询用户配额"""
+    from quota import QuotaManager
+    qm = QuotaManager(db)
+    allowed, used, limit = qm.check_quota(username)
+    tier = qm.get_tier(username)
+    return JSONResponse({
+        "username": username, "tier": tier,
+        "used_today": used, "daily_limit": limit,
+        "remaining": max(0, limit - used), "allowed": allowed,
+    })
+
+
+@app.post("/api/tier/{username}")
+async def set_tier(username: str, req: dict):
+    """设置用户等级"""
+    from quota import QuotaManager
+    tier = req.get("tier", "free")
+    if tier not in ("free", "pro", "team"):
+        return JSONResponse({"error": "无效等级"}, status_code=400)
+    expires_at = req.get("expires_at", 0)
+    qm = QuotaManager(db)
+    qm.set_tier(username, tier, expires_at)
+    return JSONResponse({"ok": True, "tier": tier})
+
+
+@app.get("/api/waveform/{session_id}")
+async def get_waveform(session_id: str):
+    """获取热度波形 SVG"""
+    dm = db.get_danmaku(session_id)
+    if not dm or not dm.get("file_path"):
+        from waveform import _empty_svg
+        return Response(content=_empty_svg(800, 120), media_type="image/svg+xml")
+    fp = Path(dm["file_path"])
+    if not fp.exists():
+        from waveform import _empty_svg
+        return Response(content=_empty_svg(800, 120), media_type="image/svg+xml")
+    try:
+        with open(fp, encoding="utf-8") as f:
+            data = json.load(f)
+        messages = data.get("messages", [])
+        chat_msgs = [m for m in messages if m.get("type") == "chat"]
+        if not chat_msgs:
+            from waveform import _empty_svg
+            return Response(content=_empty_svg(800, 120), media_type="image/svg+xml")
+        max_t = max(m["t"] for m in chat_msgs)
+        window = 10
+        timeline = []
+        for t in range(0, int(max_t) + 1, window):
+            count = sum(1 for m in chat_msgs if t <= m["t"] < t + window)
+            timeline.append({"t": t, "density": round(count / window, 2), "count": count})
+        from waveform import generate_waveform_svg
+        svg = generate_waveform_svg(timeline)
+        return Response(content=svg, media_type="image/svg+xml")
+    except Exception:
+        from waveform import _empty_svg
+        return Response(content=_empty_svg(800, 120), media_type="image/svg+xml")
+
+
+@app.post("/api/flashcut/{username}/auto")
+async def trigger_flashcut_auto(username: str, req: dict = {}):
+    """手动触发 FlashCut 全自动流水线"""
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
+    filename = req.get("filename", "")
+    if not filename:
+        files = manager.get_recordings(username)
+        merged = [f for f in files if "_merged" in f["filename"]]
+        if merged:
+            filename = merged[0]["filename"]
+        elif files:
+            filename = files[0]["filename"]
+    if not filename:
+        return JSONResponse({"error": "无可处理的录制文件"}, status_code=400)
+
+    video_path = Path(RECORDINGS_DIR) / username / filename
+    if not video_path.exists():
+        return JSONResponse({"error": f"文件不存在: {filename}"}, status_code=404)
+
+    # 异步执行流水线
+    asyncio.create_task(manager._auto_flashcut_pipeline(username, video_path))
+    return JSONResponse({"ok": True, "message": "FlashCut 流水线已启动", "filename": filename})
+
+
+@app.get("/api/clips/item/{clip_id}/cover")
+async def get_clip_cover(clip_id: str):
+    """获取片段封面图"""
+    clip = db.get_clip(clip_id)
+    if not clip or not clip.get("output_file"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # 封面文件名: {clip_id}_cover.jpg
+    clip_path = Path(RECORDINGS_DIR) / clip["output_file"]
+    cover_path = clip_path.with_name(clip_path.stem + "_cover.jpg")
+    if cover_path.exists():
+        return FileResponse(str(cover_path), media_type="image/jpeg",
+                            headers={"Cache-Control": "max-age=3600"})
+    return JSONResponse({"error": "no cover"}, status_code=404)
+
+
+@app.get("/api/system/whisper")
+async def check_whisper():
+    """检查 Whisper 是否可用"""
+    try:
+        from subtitle_gen import is_whisper_available
+        available = is_whisper_available()
+        return JSONResponse({"available": available})
+    except Exception:
+        return JSONResponse({"available": False})
 
 
 # ========== 启动 ==========

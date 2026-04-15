@@ -65,13 +65,13 @@ function _ri(root){
     }
   });
 }
-// 延迟执行 + 定时扫描，确保 Alpine.js 动态渲染的元素也能被处理
+// 延迟执行 + MutationObserver，确保 Alpine.js 动态渲染的元素也能被处理
 document.addEventListener('DOMContentLoaded',()=>{
   setTimeout(()=>_ri(), 100);
   setTimeout(()=>_ri(), 500);
   setTimeout(()=>_ri(), 1500);
-  new MutationObserver(()=>{ requestAnimationFrame(()=>_ri()); }).observe(document.body,{childList:true,subtree:true});
-  setInterval(()=>_ri(), 3000);
+  let _riPending=false;
+  new MutationObserver(()=>{ if(!_riPending){_riPending=true; requestAnimationFrame(()=>{_ri();_riPending=false;});} }).observe(document.body,{childList:true,subtree:true});
 });
 </script>
 <style>
@@ -103,7 +103,8 @@ document.addEventListener('DOMContentLoaded',()=>{
 <!-- ===== TOP NAV ===== -->
 <nav class="fixed top-0 w-full z-50 flex justify-between items-center px-4 h-14 bg-surface border-b border-outline-variant/15 tracking-tight">
   <div class="flex items-center gap-4">
-    <span class="text-lg font-black tracking-tighter uppercase ml-14 md:ml-0">The Orchestrator</span>
+    <span class="text-lg font-black tracking-tighter uppercase ml-14 md:ml-0" x-text="uiMode==='simple'?'FlashCut':'The Orchestrator'"></span>
+    <button class="text-[10px] px-2 py-1 rounded-full border border-outline-variant/20 text-on-surface-variant hover:text-primary transition-colors" @click="toggleUIMode()" x-text="uiMode==='simple'?'高级模式':'极简模式'"></button>
   </div>
   <div class="flex items-center gap-3">
     <div class="hidden md:flex items-center gap-2.5 px-3 py-1 bg-surface-container rounded-full text-[11px] font-medium border border-outline-variant/10">
@@ -125,37 +126,54 @@ document.addEventListener('DOMContentLoaded',()=>{
       </template>
     </div>
     <div class="flex items-center gap-1.5">
-      <button class="px-3 py-1 bg-gradient-to-br from-primary-container to-primary text-on-primary-container text-[11px] font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="startAll()">全部启动</button>
-      <button class="px-3 py-1 bg-surface-container-highest text-on-surface text-[11px] font-bold rounded border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all" @click="stopAll()">全部停止</button>
-      <span class="material-symbols-outlined cursor-pointer hover:bg-surface-container-highest p-1.5 rounded-full transition-all text-on-surface-variant text-xl" @click="showSettings=true">settings</span>
+      <button class="px-3 py-1 bg-gradient-to-br from-primary-container to-primary text-on-primary-container text-[11px] font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="startAll()" aria-label="全部启动">全部启动</button>
+      <button class="px-3 py-1 bg-surface-container-highest text-on-surface text-[11px] font-bold rounded border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all" @click="stopAll()" aria-label="全部停止">全部停止</button>
+      <span class="material-symbols-outlined cursor-pointer hover:bg-surface-container-highest p-1.5 rounded-full transition-all text-on-surface-variant text-xl" @click="showSettings=true" role="button" aria-label="设置">settings</span>
     </div>
   </div>
 </nav>
 
 <!-- ===== SIDE NAV (Icon Only, 56px) ===== -->
-<aside class="hidden md:flex fixed left-0 top-14 h-[calc(100vh-3.5rem)] w-14 flex-col items-center py-3 bg-surface-container border-r border-outline-variant/15 z-40 gap-1">
-  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='streams'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='streams'">
+<aside class="hidden md:flex fixed left-0 top-14 h-[calc(100vh-3.5rem)] w-14 flex-col items-center py-3 bg-surface-container border-r border-outline-variant/15 z-40 gap-1" x-show="uiMode==='advanced'" role="navigation" aria-label="主导航">
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='streams'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='streams'" aria-label="Streams">
     <span class="material-symbols-outlined text-xl">sensors</span>
     <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Streams</span>
   </button>
-  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='storage'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='storage'; fetchDisk()">
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='storage'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='storage'; fetchDisk()" aria-label="Storage">
     <span class="material-symbols-outlined text-xl">hard_drive</span>
     <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Storage</span>
   </button>
-  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='network'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='network'; fetchNetwork()">
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='network'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='network'; fetchNetwork()" aria-label="Network">
     <span class="material-symbols-outlined text-xl">lan</span>
     <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Network</span>
   </button>
-  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='system'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='system'; fetchSystem(); loadLogs()">
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='system'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='system'; fetchSystem(); loadLogs()" aria-label="System">
     <span class="material-symbols-outlined text-xl">terminal</span>
     <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">System</span>
   </button>
+  <div class="w-6 h-px bg-outline-variant/20 my-1"></div>
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='highlights'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='highlights'; fetchHighlights()" aria-label="Highlights">
+    <span class="material-symbols-outlined text-xl">bolt</span>
+    <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">高光</span>
+  </button>
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='clips'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='clips'; fetchClips()" aria-label="Clips">
+    <span class="material-symbols-outlined text-xl">movie</span>
+    <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">片段</span>
+  </button>
   <div class="flex-1"></div>
-  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" @click="showSettings=true">
+  <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" @click="showSettings=true" aria-label="设置">
     <span class="material-symbols-outlined text-xl">settings</span>
     <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">设置</span>
   </button>
 </aside>
+
+<!-- ===== DISK WARNING BANNER ===== -->
+<div x-show="diskInfo.free_bytes > 0 && diskInfo.free_bytes < 2*1024*1024*1024" x-cloak
+  class="fixed top-14 left-0 right-0 z-40 bg-error/15 border-b border-error/30 px-4 py-2 flex items-center justify-center gap-2 text-sm text-error font-medium">
+  <span class="material-symbols-outlined text-base">warning</span>
+  <span>磁盘空间不足: <span x-text="fmtSize(diskInfo.free_bytes)"></span> 剩余</span>
+  <span x-show="diskInfo.free_bytes < 500*1024*1024" class="font-bold">(紧急 — 录制可能中断)</span>
+</div>
 
 <!-- ===== DRAG OVERLAY ===== -->
 <div x-show="dragOver" x-cloak class="fixed inset-0 z-[999] bg-primary-container/10 border-2 border-dashed border-primary flex items-center justify-center pointer-events-none">
@@ -163,8 +181,95 @@ document.addEventListener('DOMContentLoaded',()=>{
 </div>
 
 <!-- ===== MAIN CONTENT ===== -->
-<main class="md:pl-14 pt-14 min-h-screen">
-<div class="p-4 lg:p-6">
+<main class="pt-14 min-h-screen" :class="uiMode==='advanced'?'md:pl-14':''">
+
+<!-- ===== FLASHCUT SIMPLE MODE ===== -->
+<div x-show="uiMode==='simple'" x-cloak class="p-4 lg:p-8 max-w-5xl mx-auto">
+  <!-- Hero -->
+  <div class="text-center mb-8">
+    <h1 class="text-2xl font-black mb-2">别让爆单的直播，变成硬盘里的废数据</h1>
+    <p class="text-sm text-on-surface-variant">录制结束，自动切出带字幕的短视频，直接发布</p>
+  </div>
+
+  <!-- 主播卡片网格 -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+    <template x-for="m in models" :key="m.username">
+      <div class="bg-surface-container rounded-2xl p-5 border border-outline-variant/10 relative overflow-hidden"
+           :class="m.state==='recording'?'recording-pulse':''">
+        <!-- 状态指示 -->
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden">
+              <img :src="m.thumbnail_url||''" class="w-full h-full object-cover" x-show="m.thumbnail_url" />
+              <span class="material-symbols-outlined text-on-surface-variant" x-show="!m.thumbnail_url">person</span>
+            </div>
+            <div>
+              <div class="font-bold text-sm" x-text="m.username"></div>
+              <div class="text-[10px] text-on-surface-variant" x-text="m.platform"></div>
+            </div>
+          </div>
+          <span class="w-2.5 h-2.5 rounded-full" :class="{'bg-[#00b894]':m.state==='recording','bg-tertiary':m.status==='public','bg-outline':m.status==='offline','bg-error':m.state==='error'}"></span>
+        </div>
+
+        <!-- 状态文字 -->
+        <div class="text-xs text-on-surface-variant mb-4" x-text="m.state==='recording'?'录制中 · '+fmtSize(m.current_recording?.file_size||0):m.status==='public'?'在线':m.state==='monitoring'?'监控中':'离线'"></div>
+
+        <!-- 两个核心按钮 -->
+        <div class="flex gap-2">
+          <button class="flex-1 h-10 rounded-xl text-sm font-bold transition-all"
+            :class="m.state==='recording'?'bg-error/20 text-error':'bg-primary text-on-primary'"
+            @click="m.state==='recording'?stopModel(m.username):startModel(m.username)"
+            x-text="m.state==='recording'?'停止录制':'开始录制'"></button>
+          <button class="flex-1 h-10 rounded-xl bg-surface-container-highest text-sm font-bold text-on-surface-variant hover:text-primary transition-all"
+            @click="triggerFlashCut(m.username)">生成高光</button>
+        </div>
+
+        <!-- 热度波形（如果有弹幕数据） -->
+        <div class="mt-3" x-show="m._waveformHtml" x-html="m._waveformHtml"></div>
+      </div>
+    </template>
+
+    <!-- 添加主播卡片 -->
+    <div class="bg-surface-container rounded-2xl p-5 border-2 border-dashed border-outline-variant/20 flex flex-col items-center justify-center min-h-[180px] cursor-pointer hover:border-primary/40 transition-colors"
+         @click="$refs.simpleAddInput.focus()">
+      <span class="material-symbols-outlined text-3xl text-on-surface-variant/40 mb-2">add</span>
+      <input class="w-full bg-transparent text-center text-sm placeholder:text-on-surface-variant/40 outline-none" placeholder="粘贴直播间链接" x-ref="simpleAddInput" x-model="newModel" @keydown.enter="addModel()"/>
+    </div>
+  </div>
+
+  <!-- 最近生成的片段 -->
+  <div x-show="recentClips.length > 0">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-bold">最近生成的短视频</h2>
+      <button class="text-xs text-primary font-medium" @click="uiMode='advanced'; currentPage='clips'; fetchClips()">查看全部</button>
+    </div>
+    <div class="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+      <template x-for="c in recentClips.slice(0, 10)" :key="c.clip_id">
+        <div class="flex-none w-36 bg-surface-container rounded-xl overflow-hidden border border-outline-variant/10">
+          <div class="aspect-[9/16] max-h-48 bg-black flex items-center justify-center cursor-pointer relative" @click="playingVideo='/api/clips/file/'+c.username+'/'+c.output_file.split('/').pop()">
+            <span class="material-symbols-outlined text-white/40 text-2xl">play_arrow</span>
+            <span class="absolute bottom-1 right-1 text-[9px] bg-black/60 text-white px-1 py-0.5 rounded" x-text="Math.round(c.duration)+'s'"></span>
+          </div>
+          <div class="p-2">
+            <div class="text-[10px] font-bold truncate" x-text="c.username"></div>
+            <div class="text-[9px] text-on-surface-variant" x-text="fmtSize(c.size)"></div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- 配额提示 -->
+  <div class="mt-6 text-center text-xs text-on-surface-variant/60">
+    <span>FlashCut 闪切</span> · <span x-text="'今日已生成 '+(quotaInfo.used_today||0)+'/'+( quotaInfo.daily_limit||3)+' 条'"></span>
+    <template x-if="quotaInfo.tier==='free'">
+      <span> · <button class="text-primary font-bold" @click="showToast('升级功能开发中')">升级 Pro</button></span>
+    </template>
+  </div>
+</div>
+
+<!-- ===== ADVANCED MODE ===== -->
+<div x-show="uiMode==='advanced'" class="p-4 lg:p-6">
 
 <!-- ========== PAGE: STREAMS ========== -->
 <div x-show="currentPage==='streams'">
@@ -204,7 +309,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       <!-- Thumbnail (left, 120px, 4:3) -->
       <div class="relative w-[120px] shrink-0 aspect-[4/3] cursor-pointer" @click="openRecordings(m.username)">
         <template x-if="m.thumbnail_url">
-          <img class="w-full h-full object-cover" :src="m.thumbnail_url + '?t=' + thumbTs" @error="$el.style.display='none'" @load="$el.style.display=''"/>
+          <img class="w-full h-full object-cover" loading="lazy" :src="m.thumbnail_url + '?t=' + thumbTs" @error="$el.style.display='none'" @load="$el.style.display=''"/>
         </template>
         <template x-if="!m.thumbnail_url">
           <div class="w-full h-full flex items-center justify-center text-sm font-bold text-white/70" :style="'background:' + nameColor(m.username)" x-text="m.username.slice(0,4)"></div>
@@ -216,7 +321,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         </template>
         <template x-if="m.state==='recording' && m.current_recording">
           <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1">
-            <span class="text-[10px] font-mono text-white/90" x-text="fmtDur(Math.floor(Date.now()/1000 - m.current_recording.start_time))"></span>
+            <span class="text-[10px] font-mono text-white/90" x-text="fmtDur(Math.floor((_recTick||Date.now())/1000 - m.current_recording.start_time))"></span>
           </div>
         </template>
       </div>
@@ -289,10 +394,10 @@ document.addEventListener('DOMContentLoaded',()=>{
               <span class="material-symbols-outlined text-xs">stop</span>停止
             </button>
           </template>
-          <button class="p-1 bg-surface-container-highest rounded text-on-surface-variant hover:text-on-surface transition-all" @click="openRecordings(m.username)" title="文件">
+          <button class="p-1 bg-surface-container-highest rounded text-on-surface-variant hover:text-on-surface transition-all" @click="openRecordings(m.username)" title="文件" aria-label="查看录制文件">
             <span class="material-symbols-outlined text-base">folder</span>
           </button>
-          <button class="p-1 bg-surface-container-highest rounded text-on-surface-variant hover:text-error transition-all" @click="removeModel(m.username)" title="删除">
+          <button class="p-1 bg-surface-container-highest rounded text-on-surface-variant hover:text-error transition-all" @click="removeModel(m.username)" title="删除" aria-label="删除主播">
             <span class="material-symbols-outlined text-base">close</span>
           </button>
         </div>
@@ -303,7 +408,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 </div>
 
 <!-- ========== PAGE: STORAGE ========== -->
-<div x-show="currentPage==='storage'" x-cloak x-init="$watch('currentPage', v => { if(v==='storage') fetchStorageBreakdown() })">
+<div x-show="currentPage==='storage'" x-cloak x-init="$watch('currentPage', v => { if(v==='storage') { fetchStorageBreakdown(); fetchDailyStats(); } })">
 <!-- Storage Overview -->
 <h2 class="text-2xl font-black tracking-tight mb-6">Storage</h2>
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
@@ -327,6 +432,28 @@ document.addEventListener('DOMContentLoaded',()=>{
   </div>
   <div class="h-2.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
     <div class="h-full bg-gradient-to-r from-primary-container to-primary rounded-full transition-all" :style="'width:'+Math.min(diskInfo.total_bytes?diskInfo.recordings_bytes/diskInfo.total_bytes*100:0,100)+'%'"></div>
+  </div>
+</div>
+<!-- Daily recording stats chart -->
+<div class="bg-surface-container rounded-xl border border-outline-variant/10 mb-6" x-show="Array.isArray(dailyStats) && dailyStats.length > 0">
+  <div class="px-5 py-3 border-b border-outline-variant/10 flex items-center justify-between">
+    <h3 class="text-sm font-bold">近 30 天录制统计</h3>
+    <span class="text-xs text-on-surface-variant" x-text="(Array.isArray(dailyStats)?dailyStats:[]).reduce((s,d)=>s+d.sessions,0)+' 次录制 · '+fmtDur((Array.isArray(dailyStats)?dailyStats:[]).reduce((s,d)=>s+d.total_duration,0))"></span>
+  </div>
+  <div class="p-5">
+    <div class="flex items-end gap-px h-24">
+      <template x-for="d in dailyStats" :key="d.day">
+        <div class="flex-1 flex flex-col items-center justify-end h-full group relative">
+          <div class="w-full bg-primary/70 rounded-t-sm transition-all hover:bg-primary"
+            :style="'height:'+Math.max(dailyStats.length?d.total_duration/(Math.max(...dailyStats.map(x=>x.total_duration))||1)*100:0,2)+'%'"
+            :title="d.day+': '+d.sessions+'次, '+fmtDur(d.total_duration)"></div>
+        </div>
+      </template>
+    </div>
+    <div class="flex justify-between mt-1.5 text-[9px] text-on-surface-variant">
+      <span x-text="dailyStats.length?dailyStats[0].day.slice(5):''"></span>
+      <span x-text="dailyStats.length?dailyStats[dailyStats.length-1].day.slice(5):''"></span>
+    </div>
   </div>
 </div>
 <!-- Per-streamer breakdown -->
@@ -363,11 +490,16 @@ document.addEventListener('DOMContentLoaded',()=>{
   </div>
 </div>
 <!-- Cleanup suggestions -->
-<div class="bg-surface-container rounded-xl border border-outline-variant/10">
-  <div class="px-5 py-3 border-b border-outline-variant/10">
-    <h3 class="text-sm font-bold">清理建议</h3>
+<div class="bg-surface-container rounded-xl border border-outline-variant/10 mb-6">
+  <div class="px-5 py-3 border-b border-outline-variant/10 flex items-center justify-between">
+    <h3 class="text-sm font-bold">批量操作 & 清理</h3>
   </div>
   <div class="p-5 space-y-3">
+    <div class="flex items-center gap-3 pb-3 border-b border-outline-variant/10">
+      <button class="px-3 py-1.5 bg-gradient-to-r from-primary-container to-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="batchMergeAllEnded()">合并所有待合并会话</button>
+      <button class="px-3 py-1.5 bg-surface-container-highest text-on-surface text-xs font-bold rounded border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all" @click="batchCleanupMerged()">清理已合并原文件</button>
+      <button class="px-3 py-1.5 bg-surface-container-highest text-on-surface text-xs font-bold rounded border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all" @click="retryFailedMerges()">重试失败合并</button>
+    </div>
     <template x-for="item in storageBreakdown.filter(i => i.unmerged_count > 0 && i.merged_count > 0)" :key="'cleanup-'+item.username">
       <div class="flex items-center justify-between text-sm">
         <div class="flex items-center gap-2">
@@ -506,12 +638,115 @@ document.addEventListener('DOMContentLoaded',()=>{
 </div>
 
 </div>
+
+<!-- ===== HIGHLIGHTS PAGE ===== -->
+<div x-show="currentPage==='highlights'" x-cloak>
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-lg font-bold">高光片段</h2>
+    <div class="flex gap-2">
+      <select class="bg-surface-container-high border-none text-sm rounded-md h-9 px-3 focus:ring-1 focus:ring-primary" x-model="highlightFilterUser" @change="fetchHighlights()">
+        <option value="">全部主播</option>
+        <template x-for="m in models" :key="m.username"><option :value="m.username" x-text="m.username"></option></template>
+      </select>
+      <button class="h-9 px-4 rounded-lg bg-primary text-on-primary text-sm font-bold" @click="detectHighlightsForUser()">检测高光</button>
+    </div>
+  </div>
+  <template x-if="highlightsList.length === 0">
+    <div class="text-center py-16 text-on-surface-variant">
+      <span class="material-symbols-outlined text-4xl mb-2 block">bolt</span>
+      <p class="text-sm">暂无高光片段</p>
+      <p class="text-xs mt-1">选择主播并点击"检测高光"开始分析</p>
+    </div>
+  </template>
+  <div class="grid gap-3">
+    <template x-for="h in highlightsList" :key="h.highlight_id">
+      <div class="bg-surface-container rounded-xl p-4 border border-outline-variant/10">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-bold" x-text="h.title || '高光片段'"></span>
+            <span class="text-[10px] px-2 py-0.5 rounded font-bold"
+              :class="{'bg-primary/20 text-primary':h.category==='engagement_spike','bg-tertiary/20 text-tertiary':h.category==='audio_peak','bg-secondary/20 text-secondary':h.category==='keyword_trigger','bg-outline/20 text-on-surface-variant':!h.category||h.category==='scene_transition'}"
+              x-text="({'engagement_spike':'弹幕爆发','audio_peak':'音频高潮','keyword_trigger':'关键词','scene_transition':'场景切换'})[h.category]||h.category"></span>
+            <span class="text-[10px] px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant" x-text="h.username"></span>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="text-xs text-on-surface-variant" x-text="h.video_file"></span>
+          </div>
+        </div>
+        <div class="flex items-center gap-4 mb-2">
+          <div class="flex-1 h-2 bg-surface-container-highest rounded-full overflow-hidden">
+            <div class="h-full bg-primary rounded-full" :style="'width:'+Math.round(h.score*100)+'%'"></div>
+          </div>
+          <span class="text-xs font-mono text-on-surface-variant" x-text="Math.round(h.score*100)+'%'"></span>
+          <span class="text-xs text-on-surface-variant" x-text="fmtTimestamp(h.start_time)+' → '+fmtTimestamp(h.end_time)"></span>
+          <span class="text-xs text-on-surface-variant" x-text="Math.round(h.end_time-h.start_time)+'s'"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="text-xs px-3 py-1.5 rounded-lg bg-primary text-on-primary font-bold" @click="generateClipFromHighlight(h.highlight_id)">生成片段</button>
+          <button class="text-xs px-3 py-1.5 rounded-lg bg-surface-container-highest text-on-surface-variant font-bold hover:text-on-surface" @click="playHighlight(h)">预览</button>
+          <button class="text-xs px-3 py-1.5 rounded-lg bg-surface-container-highest text-on-surface-variant font-bold hover:text-error" @click="deleteHighlight(h.highlight_id)">删除</button>
+          <div class="flex-1"></div>
+          <span class="text-[10px] px-2 py-0.5 rounded font-bold"
+            :class="{'bg-tertiary/20 text-tertiary':h.status==='clipped','bg-primary/20 text-primary':h.status==='detected','bg-[#00b894]/20 text-[#00b894]':h.status==='exported'}"
+            x-text="({'detected':'待处理','clipped':'已生成','exported':'已导出','dismissed':'已忽略'})[h.status]||h.status"></span>
+        </div>
+      </div>
+    </template>
+  </div>
+  <!-- 批量操作 -->
+  <div class="mt-4 flex gap-2" x-show="highlightsList.filter(h=>h.status==='detected').length>0">
+    <button class="h-9 px-4 rounded-lg bg-primary text-on-primary text-sm font-bold" @click="batchGenerateClips()">
+      一键生成所有片段 (<span x-text="highlightsList.filter(h=>h.status==='detected').length"></span>)
+    </button>
+  </div>
+</div>
+
+<!-- ===== CLIPS PAGE ===== -->
+<div x-show="currentPage==='clips'" x-cloak>
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-lg font-bold">短视频片段</h2>
+    <select class="bg-surface-container-high border-none text-sm rounded-md h-9 px-3 focus:ring-1 focus:ring-primary" x-model="clipFilterUser" @change="fetchClips()">
+      <option value="">全部主播</option>
+      <template x-for="m in models" :key="m.username"><option :value="m.username" x-text="m.username"></option></template>
+    </select>
+  </div>
+  <template x-if="clipsList.length === 0">
+    <div class="text-center py-16 text-on-surface-variant">
+      <span class="material-symbols-outlined text-4xl mb-2 block">movie</span>
+      <p class="text-sm">暂无片段</p>
+      <p class="text-xs mt-1">从高光页面生成片段</p>
+    </div>
+  </template>
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+    <template x-for="c in clipsList" :key="c.clip_id">
+      <div class="bg-surface-container rounded-xl overflow-hidden border border-outline-variant/10">
+        <div class="aspect-[9/16] max-h-64 bg-black flex items-center justify-center cursor-pointer relative group" @click="playingVideo='/api/clips/file/'+c.username+'/'+c.output_file.split('/').pop()">
+          <span class="material-symbols-outlined text-white/50 text-4xl group-hover:text-white transition-colors">play_arrow</span>
+          <span class="absolute bottom-2 right-2 text-[10px] bg-black/60 text-white px-1.5 py-0.5 rounded" x-text="Math.round(c.duration)+'s'"></span>
+        </div>
+        <div class="p-3">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-xs font-bold truncate" x-text="c.username"></span>
+            <span class="text-[10px] text-on-surface-variant" x-text="fmtSize(c.size)"></span>
+          </div>
+          <div class="text-[10px] text-on-surface-variant mb-2" x-text="c.resolution+' · '+c.format"></div>
+          <div class="flex gap-1">
+            <a class="flex-1 text-center text-xs py-1.5 rounded-lg bg-primary text-on-primary font-bold" :href="'/api/clips/file/'+c.username+'/'+c.output_file.split('/').pop()+'?download=1'" download>下载</a>
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-surface-container-highest text-on-surface-variant hover:text-error font-bold" @click="deleteClip(c.clip_id)">删除</button>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+</div><!-- /advanced mode -->
+
 </main>
 
 <!-- ===== MODALS ===== -->
 <!-- ===== RECORDINGS MODAL ===== -->
 <div class="fixed inset-0 z-[100] flex items-center justify-center bg-surface-dim/60 backdrop-blur-xl" x-show="showModal" x-cloak @click.self="showModal=false">
-  <div class="w-[800px] max-h-[90vh] bg-surface-container border border-outline-variant/30 rounded-xl shadow-2xl flex flex-col overflow-hidden" @click.stop>
+  <div class="w-full max-w-[800px] mx-4 max-h-[90vh] bg-surface-container border border-outline-variant/30 rounded-xl shadow-2xl flex flex-col overflow-hidden" @click.stop>
     <!-- Header -->
     <div class="flex items-center justify-between px-6 py-4 border-b border-outline-variant/15">
       <div class="flex items-center gap-3">
@@ -530,6 +765,8 @@ document.addEventListener('DOMContentLoaded',()=>{
       <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='files'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='files'">文件列表</button>
       <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='sessions'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='sessions'; loadSessions()">录制会话</button>
       <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='merge'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='merge'; loadGroups()">手动合并</button>
+      <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='health'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='health'; loadHealthCheck()">健康检查</button>
+      <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='modal-highlights'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='modal-highlights'; loadModalHighlights()">高光</button>
     </div>
     <!-- Content -->
     <div class="flex-1 overflow-y-auto scrollbar-hide">
@@ -550,11 +787,18 @@ document.addEventListener('DOMContentLoaded',()=>{
       </div>
       <!-- Video Player -->
       <div class="px-6 pb-2" x-show="playingVideo">
-        <video class="w-full rounded-xl bg-black" controls autoplay :src="playingVideo"></video>
+        <video class="w-full rounded-xl bg-black" controls :src="playingVideo"></video>
       </div>
 
+      <!-- Loading spinner -->
+      <template x-if="modalLoading">
+        <div class="flex items-center justify-center py-16">
+          <span class="material-symbols-outlined anim-spin text-3xl text-primary">progress_activity</span>
+        </div>
+      </template>
+
       <!-- TAB: Files -->
-      <template x-if="modalTab==='files'">
+      <template x-if="modalTab==='files' && !modalLoading">
         <div class="px-6 pb-6">
           <div class="flex items-center gap-3 py-4">
             <div class="relative flex-1">
@@ -573,7 +817,7 @@ document.addEventListener('DOMContentLoaded',()=>{
           <table class="w-full text-left" x-show="modalFiles.length>0">
             <thead>
               <tr class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold border-b border-outline-variant/15">
-                <th class="pb-3 pl-2 w-8" x-show="batchMode"><input type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary"/></th>
+                <th class="pb-3 pl-2 w-8" x-show="batchMode"><input type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary" @change="selectedFiles = $event.target.checked ? filteredFiles.map(f=>f.filename) : []"/></th>
                 <th class="pb-3">文件名</th><th class="pb-3 text-right">大小</th><th class="pb-3 text-right">日期</th><th class="pb-3 text-right pr-2">操作</th>
               </tr>
             </thead>
@@ -594,9 +838,9 @@ document.addEventListener('DOMContentLoaded',()=>{
                   <td class="py-3 text-sm text-right text-on-surface-variant" x-text="fmtDate(f.created)"></td>
                   <td class="py-3 text-right pr-2">
                     <div class="flex items-center justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
-                      <button class="p-1.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-tertiary transition-all" @click.stop="renameFile(f.filename)" x-show="!batchMode"><span class="material-symbols-outlined text-lg">edit</span></button>
-                      <a class="p-1.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all" :href="'/api/video/'+modalUsername+'/'+f.filename+'?download=1'" @click.stop><span class="material-symbols-outlined text-lg">download</span></a>
-                      <button class="p-1.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-error transition-all" @click.stop="deleteFile(f.filename)" x-show="!batchMode"><span class="material-symbols-outlined text-lg">delete</span></button>
+                      <button class="p-1.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-tertiary transition-all" @click.stop="renameFile(f.filename)" x-show="!batchMode" aria-label="重命名"><span class="material-symbols-outlined text-lg">edit</span></button>
+                      <a class="p-1.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all" :href="'/api/video/'+modalUsername+'/'+f.filename+'?download=1'" @click.stop aria-label="下载"><span class="material-symbols-outlined text-lg">download</span></a>
+                      <button class="p-1.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-error transition-all" @click.stop="deleteFile(f.filename)" x-show="!batchMode" aria-label="删除"><span class="material-symbols-outlined text-lg">delete</span></button>
                     </div>
                   </td>
                 </tr>
@@ -609,6 +853,39 @@ document.addEventListener('DOMContentLoaded',()=>{
       <!-- TAB: Sessions -->
       <template x-if="modalTab==='sessions'">
         <div class="p-6 space-y-4">
+          <!-- Batch actions -->
+          <div class="flex items-center gap-3 pb-3 border-b border-outline-variant/10" x-show="modalSessions.filter(s=>s.status==='ended'&&s.segments.length>=2).length>0">
+            <button class="px-3 py-1.5 bg-gradient-to-r from-primary-container to-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="mergeAllEndedSessions()">合并所有待合并会话</button>
+            <span class="text-xs text-on-surface-variant" x-text="modalSessions.filter(s=>s.status==='ended'&&s.segments.length>=2).length + ' 个待合并'"></span>
+          </div>
+          <!-- Merge history toggle -->
+          <div class="flex items-center gap-3" x-show="mergeHistory.length>0">
+            <button class="text-xs text-primary font-medium hover:underline flex items-center gap-1" @click="showMergeHistory=!showMergeHistory">
+              <span class="material-symbols-outlined text-sm">history</span>
+              <span x-text="showMergeHistory?'隐藏合并历史':'查看合并历史 ('+mergeHistory.length+')'"></span>
+            </button>
+          </div>
+          <!-- Merge history panel -->
+          <template x-if="showMergeHistory && mergeHistory.length>0">
+            <div class="bg-surface-container rounded-xl border border-outline-variant/10 overflow-hidden">
+              <div class="px-4 py-2.5 border-b border-outline-variant/10 text-xs font-bold text-on-surface-variant">合并历史</div>
+              <div class="divide-y divide-outline-variant/5 max-h-48 overflow-y-auto">
+                <template x-for="h in mergeHistory" :key="h.id">
+                  <div class="px-4 py-2 flex items-center justify-between text-xs">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class="material-symbols-outlined text-sm" :class="h.status==='done'?'text-[#00b894]':'text-error'" x-text="h.status==='done'?'check_circle':'warning'"></span>
+                      <span class="truncate" x-text="h.output_file || '(失败)'"></span>
+                    </div>
+                    <div class="flex items-center gap-3 shrink-0 text-on-surface-variant">
+                      <span x-show="h.savings_bytes>0" class="text-[#00b894]" x-text="'节省 '+fmtSize(h.savings_bytes)"></span>
+                      <span x-text="fmtSize(h.input_size)+' → '+fmtSize(h.output_size)"></span>
+                      <span x-text="fmtDate(h.completed_at)"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
           <template x-if="modalSessions.length===0">
             <p class="text-center py-12 text-on-surface-variant text-sm">暂无录制会话</p>
           </template>
@@ -622,13 +899,20 @@ document.addEventListener('DOMContentLoaded',()=>{
                     x-text="sessionStatusText(s.status)"></span>
                   <span class="text-xs text-on-surface-variant" x-text="s.segments.length+' 个片段'"></span>
                   <span class="text-xs text-on-surface-variant" x-text="fmtSessionTime(s.started_at, s.ended_at)"></span>
+                  <span class="text-xs text-on-surface-variant" x-show="s.ended_at && s.started_at" x-text="'时长 '+fmtDur(Math.floor(s.ended_at - s.started_at))"></span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant/60" x-show="s.stream_end_reason" x-text="({'stall_timeout':'断流','process_exit_0':'正常结束','process_exit_error':'异常退出','user_stop':'手动停止','auto_split':'自动分割'})[s.stream_end_reason]||s.stream_end_reason"></span>
                 </div>
                 <div class="flex items-center gap-2">
                   <template x-if="s.status==='active'">
                     <span class="flex items-center gap-1.5 text-xs text-error"><span class="w-2 h-2 rounded-full bg-error animate-pulse"></span>录制中</span>
                   </template>
                   <template x-if="s.status==='merging'">
-                    <span class="flex items-center gap-2 text-xs text-primary"><span class="material-symbols-outlined anim-spin text-sm">progress_activity</span><span x-text="Math.round((activeMerges[s.session_id]?.progress||0)*100)+'%'"></span></span>
+                    <span class="flex items-center gap-2 text-xs text-primary">
+                      <span class="material-symbols-outlined anim-spin text-sm">progress_activity</span>
+                      <span x-text="Math.round((activeMerges[s.session_id]?.progress||0)*100)+'%'"></span>
+                      <span class="text-on-surface-variant" x-show="activeMerges[s.session_id]?.message" x-text="activeMerges[s.session_id]?.message"></span>
+                      <button class="px-1.5 py-0.5 bg-surface-container-highest text-[10px] font-bold rounded text-error hover:bg-error/10 transition-all" @click="cancelMerge(modalUsername, s.session_id)">取消</button>
+                    </span>
                   </template>
                   <template x-if="s.status==='merged'">
                     <span class="text-xs text-[#00b894] cursor-pointer hover:underline" @click="playingVideo='/api/video/'+modalUsername+'/'+s.merged_file" x-text="s.merged_file"></span>
@@ -639,13 +923,33 @@ document.addEventListener('DOMContentLoaded',()=>{
                   <template x-if="s.status==='error'">
                     <div class="flex items-center gap-2">
                       <span class="text-xs text-error" x-text="s.merge_error||'错误'"></span>
-                      <button class="px-2 py-1 bg-surface-container-highest text-xs font-bold rounded text-tertiary hover:bg-surface-bright transition-all" @click="mergeSession(s.session_id)">重试</button>
+                      <span x-show="s.retry_count >= 3" class="text-[10px] text-on-surface-variant">(已达最大重试)</span>
+                      <button class="px-2 py-1 bg-surface-container-highest text-xs font-bold rounded text-tertiary hover:bg-surface-bright transition-all" x-show="!s.retry_count || s.retry_count < 3" @click="mergeSession(s.session_id)">重试</button>
                     </div>
                   </template>
                 </div>
               </div>
               <template x-if="s.status==='merging' && activeMerges[s.session_id]?.progress>0">
                 <div class="h-1 bg-surface-container-highest"><div class="h-full bg-primary transition-all" :style="'width:'+(activeMerges[s.session_id]?.progress*100)+'%'"></div></div>
+              </template>
+              <!-- Session timeline bar -->
+              <template x-if="s.segments.length > 1">
+                <div class="px-4 py-2 border-b border-outline-variant/5">
+                  <div class="h-3 bg-surface-container-highest rounded-full flex overflow-hidden gap-px">
+                    <template x-for="(seg, idx) in s.segments" :key="seg">
+                      <div class="h-full bg-primary/70 rounded-full relative group cursor-pointer hover:bg-primary transition-colors"
+                           :style="'flex:'+getSegmentFlex(seg, s.segments[idx+1], s)"
+                           @click="playingVideo='/api/video/'+modalUsername+'/'+seg">
+                        <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-inverse-surface text-inverse-on-surface text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+                             x-text="seg+' · '+getFileSize(seg)"></div>
+                      </div>
+                    </template>
+                  </div>
+                  <div class="flex justify-between mt-1">
+                    <span class="text-[9px] text-on-surface-variant/50" x-text="s.segments[0]?.replace('.mp4','').replace('_',' ')"></span>
+                    <span class="text-[9px] text-on-surface-variant/50" x-text="s.segments.length+' 段'"></span>
+                  </div>
+                </div>
               </template>
               <div class="divide-y divide-outline-variant/5">
                 <template x-for="fn in s.segments" :key="fn">
@@ -684,7 +988,12 @@ document.addEventListener('DOMContentLoaded',()=>{
                   <div><span class="text-sm font-bold" x-text="'分组 '+(gi+1)"></span><span class="text-xs text-on-surface-variant ml-2" x-text="group.count+' 个片段，'+fmtSize(group.total_size)"></span></div>
                   <div class="flex items-center gap-2">
                     <template x-if="activeMerges[group.id]?.status==='running'">
-                      <span class="flex items-center gap-2 text-xs text-primary"><span class="material-symbols-outlined anim-spin text-sm">progress_activity</span><span x-text="Math.round((activeMerges[group.id]?.progress||0)*100)+'%'"></span></span>
+                      <span class="flex items-center gap-2 text-xs text-primary">
+                        <span class="material-symbols-outlined anim-spin text-sm">progress_activity</span>
+                        <span x-text="Math.round((activeMerges[group.id]?.progress||0)*100)+'%'"></span>
+                        <span class="text-on-surface-variant" x-show="activeMerges[group.id]?.message" x-text="activeMerges[group.id]?.message"></span>
+                        <button class="px-1.5 py-0.5 bg-surface-container-highest text-[10px] font-bold rounded text-error hover:bg-error/10 transition-all" @click="cancelMerge(modalUsername, group.id)">取消</button>
+                      </span>
                     </template>
                     <template x-if="activeMerges[group.id]?.status==='done'">
                       <span class="text-xs text-[#00b894] font-bold">已合并</span>
@@ -708,6 +1017,87 @@ document.addEventListener('DOMContentLoaded',()=>{
                 </div>
               </div>
             </template>
+          </div>
+        </div>
+      </template>
+      <!-- Health Check Tab -->
+      <template x-if="modalTab==='health'">
+        <div class="p-6 space-y-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-bold" x-text="(healthResults||[]).length+' 个文件'"></span>
+            <div class="flex gap-2">
+              <span class="text-xs px-2 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold" x-text="(healthResults||[]).filter(r=>r.valid).length+' 正常'"></span>
+              <span class="text-xs px-2 py-0.5 rounded bg-error/20 text-error font-bold" x-show="(healthResults||[]).filter(r=>!r.valid).length>0" x-text="(healthResults||[]).filter(r=>!r.valid).length+' 异常'"></span>
+            </div>
+          </div>
+          <template x-if="healthLoading">
+            <div class="flex items-center justify-center py-8"><span class="material-symbols-outlined anim-spin text-primary">progress_activity</span><span class="ml-2 text-sm text-on-surface-variant">检查中...</span></div>
+          </template>
+          <template x-for="r in (healthResults||[])" :key="r.filename">
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-surface-container-low border border-outline-variant/10">
+              <span class="w-2 h-2 rounded-full flex-none" :class="r.valid?'bg-tertiary':'bg-error'"></span>
+              <div class="flex-1 min-w-0">
+                <div class="text-xs font-mono truncate" x-text="r.filename"></div>
+                <div class="text-[10px] text-on-surface-variant mt-0.5">
+                  <span x-text="r.codec||'-'"></span> · <span x-text="r.resolution||'-'"></span> · <span x-text="r.duration>0?(r.duration>=3600?Math.floor(r.duration/3600)+'h'+Math.floor(r.duration%3600/60)+'m':Math.floor(r.duration/60)+'m'+Math.floor(r.duration%60)+'s'):'无时长'"></span>
+                </div>
+              </div>
+              <span class="text-xs text-on-surface-variant font-mono" x-text="fmtSize(r.size)"></span>
+            </div>
+          </template>
+          <template x-if="!healthLoading && (!healthResults || healthResults.length===0)">
+            <div class="text-center py-8 text-sm text-on-surface-variant">无录制文件</div>
+          </template>
+        </div>
+      </template>
+      <!-- Modal Highlights Tab -->
+      <template x-if="modalTab==='modal-highlights'">
+        <div class="p-6 space-y-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-bold" x-text="(modalHighlights||[]).length+' 个高光'"></span>
+            <div class="flex gap-2">
+              <select class="bg-surface-container-high border-none text-xs rounded px-2 py-1" x-model="modalDetectFile">
+                <option value="">最新合并文件</option>
+                <template x-for="f in modalFiles" :key="f.filename"><option :value="f.filename" x-text="f.filename"></option></template>
+              </select>
+              <button class="text-xs px-3 py-1.5 rounded-lg bg-primary text-on-primary font-bold" :disabled="modalDetecting" @click="detectModalHighlights()">
+                <span x-show="!modalDetecting">检测高光</span>
+                <span x-show="modalDetecting" class="flex items-center gap-1"><span class="material-symbols-outlined anim-spin text-sm">progress_activity</span>检测中</span>
+              </button>
+            </div>
+          </div>
+          <template x-for="h in (modalHighlights||[])" :key="h.highlight_id">
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-surface-container-low border border-outline-variant/10">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-xs font-bold" x-text="h.title||'高光'"></span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary font-bold" x-text="Math.round(h.score*100)+'%'"></span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant"
+                    x-text="({'engagement_spike':'弹幕','audio_peak':'音频','keyword_trigger':'关键词','scene_transition':'场景'})[h.category]||h.category"></span>
+                </div>
+                <div class="text-[10px] text-on-surface-variant" x-text="fmtTimestamp(h.start_time)+' → '+fmtTimestamp(h.end_time)+' ('+Math.round(h.end_time-h.start_time)+'s)'"></div>
+              </div>
+              <button class="text-xs px-2 py-1 rounded bg-surface-container-highest hover:text-primary" @click="playHighlight(h)">预览</button>
+              <button class="text-xs px-2 py-1 rounded bg-primary text-on-primary font-bold" @click="generateClipFromHighlight(h.highlight_id)">生成</button>
+            </div>
+          </template>
+          <template x-if="!modalDetecting && (!modalHighlights || modalHighlights.length===0)">
+            <div class="text-center py-8 text-sm text-on-surface-variant">点击"检测高光"分析录制文件</div>
+          </template>
+          <!-- 手动创建片段 -->
+          <div class="border-t border-outline-variant/10 pt-3 mt-3">
+            <h4 class="text-xs font-bold text-on-surface-variant mb-2">手动创建片段</h4>
+            <div class="flex gap-2 items-end">
+              <div class="space-y-1 flex-1">
+                <label class="text-[10px] text-on-surface-variant">开始(秒)</label>
+                <input type="number" min="0" step="1" class="w-full bg-surface-container-high border-none text-sm rounded h-8 px-2" x-model.number="manualClipStart"/>
+              </div>
+              <div class="space-y-1 flex-1">
+                <label class="text-[10px] text-on-surface-variant">结束(秒)</label>
+                <input type="number" min="0" step="1" class="w-full bg-surface-container-high border-none text-sm rounded h-8 px-2" x-model.number="manualClipEnd"/>
+              </div>
+              <button class="h-8 px-3 rounded bg-primary text-on-primary text-xs font-bold whitespace-nowrap" @click="createManualClip()">生成片段</button>
+            </div>
           </div>
         </div>
       </template>
@@ -771,6 +1161,121 @@ document.addEventListener('DOMContentLoaded',()=>{
           <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.h265_transcode?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
         </button>
       </div>
+      <!-- Advanced: Merge Timeout / Reuse Window / Retention -->
+      <div class="grid grid-cols-3 gap-3">
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">合并超时</label>
+          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.merge_timeout_minutes||240" @change="updateSetting('merge_timeout_minutes',parseInt($event.target.value))">
+            <option value="60">1 小时</option><option value="120">2 小时</option><option value="240">4 小时</option><option value="480">8 小时</option><option value="720">12 小时</option>
+          </select>
+        </div>
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">会话复用</label>
+          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.session_reuse_seconds||30" @change="updateSetting('session_reuse_seconds',parseInt($event.target.value))">
+            <option value="10">10 秒</option><option value="30">30 秒</option><option value="60">60 秒</option><option value="120">120 秒</option>
+          </select>
+        </div>
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">自动清理</label>
+          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.retention_days||0" @change="updateSetting('retention_days',parseInt($event.target.value))">
+            <option value="0">不清理</option><option value="7">7 天</option><option value="14">14 天</option><option value="30">30 天</option><option value="60">60 天</option><option value="90">90 天</option>
+          </select>
+        </div>
+      </div>
+      <!-- Phase 3: 自动分割 + 录后脚本 + 文件名模板 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">按大小分割</label>
+          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.split_by_size_mb||0" @change="updateSetting('split_by_size_mb',parseInt($event.target.value))">
+            <option value="0">禁用</option><option value="1024">1 GB</option><option value="2048">2 GB</option><option value="4096">4 GB</option><option value="8192">8 GB</option>
+          </select>
+        </div>
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">按时长分割</label>
+          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.split_by_duration_minutes||0" @change="updateSetting('split_by_duration_minutes',parseInt($event.target.value))">
+            <option value="0">禁用</option><option value="60">1 小时</option><option value="120">2 小时</option><option value="180">3 小时</option><option value="240">4 小时</option><option value="360">6 小时</option>
+          </select>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">文件名模板</label>
+        <input class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="{username}_{date}_{duration}_merged" :value="settings.filename_template||''" @change="updateSetting('filename_template',$event.target.value)"/>
+        <p class="text-[10px] text-on-surface-variant/60">变量: {username} {platform} {date} {time} {datetime} {duration} {segments} {quality}</p>
+      </div>
+      <div class="space-y-2">
+        <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">录后脚本</label>
+        <div class="flex gap-2">
+          <input class="flex-1 bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="脚本路径（留空禁用）" :value="settings.post_process_script||''" @change="updateSetting('post_process_script',$event.target.value)"/>
+          <button class="px-3 h-10 rounded-md bg-surface-container-highest text-xs font-bold text-on-surface-variant hover:text-primary" @click="testPostScript()">测试</button>
+        </div>
+        <p class="text-[10px] text-on-surface-variant/60">环境变量: SV_USERNAME, SV_FILE_PATH, SV_PLATFORM, SV_EVENT</p>
+      </div>
+      <!-- 配置导入导出 -->
+      <div class="flex gap-2">
+        <button class="flex-1 h-9 rounded-md bg-surface-container-highest text-xs font-bold text-on-surface-variant hover:text-primary" @click="exportConfig()">导出配置</button>
+        <label class="flex-1 h-9 rounded-md bg-surface-container-highest text-xs font-bold text-on-surface-variant hover:text-primary flex items-center justify-center cursor-pointer">
+          导入配置
+          <input type="file" accept=".json" class="hidden" @change="importConfig($event)"/>
+        </label>
+      </div>
+      <div class="h-px bg-outline-variant/15"></div>
+      <!-- V2.0: 高光检测 + 片段设置 -->
+      <div class="space-y-3">
+        <h4 class="text-sm font-semibold">高光检测</h4>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" class="rounded border-outline-variant text-primary focus:ring-primary" :checked="settings.danmaku_capture" @change="updateSetting('danmaku_capture', $event.target.checked)"/>
+            <span class="text-xs">弹幕抓取</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" class="rounded border-outline-variant text-primary focus:ring-primary" :checked="settings.highlight_auto_detect" @change="updateSetting('highlight_auto_detect', $event.target.checked)"/>
+            <span class="text-xs">合并后自动检测</span>
+          </label>
+        </div>
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">关键词（逗号分隔）</label>
+          <input class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="(settings.highlight_keywords||[]).join(', ')" @change="updateSetting('highlight_keywords', $event.target.value.split(',').map(s=>s.trim()).filter(Boolean))"/>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="space-y-1">
+            <label class="text-[10px] text-on-surface-variant">最低分数</label>
+            <input type="number" min="0" max="1" step="0.1" class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.highlight_min_score||0.6" @change="updateSetting('highlight_min_score', parseFloat($event.target.value))"/>
+          </div>
+          <div class="space-y-1">
+            <label class="text-[10px] text-on-surface-variant">最短(秒)</label>
+            <input type="number" min="5" max="300" class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.highlight_min_duration||15" @change="updateSetting('highlight_min_duration', parseInt($event.target.value))"/>
+          </div>
+          <div class="space-y-1">
+            <label class="text-[10px] text-on-surface-variant">最长(秒)</label>
+            <input type="number" min="10" max="600" class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.highlight_max_duration||60" @change="updateSetting('highlight_max_duration', parseInt($event.target.value))"/>
+          </div>
+        </div>
+      </div>
+      <div class="space-y-3">
+        <h4 class="text-sm font-semibold">片段生成</h4>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="space-y-1">
+            <label class="text-[10px] text-on-surface-variant">画面比例</label>
+            <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.clip_format||'vertical'" @change="updateSetting('clip_format', $event.target.value)">
+              <option value="vertical">竖屏 9:16</option><option value="horizontal">横屏 16:9</option><option value="square">方形 1:1</option>
+            </select>
+          </div>
+          <div class="space-y-1">
+            <label class="text-[10px] text-on-surface-variant">分辨率</label>
+            <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.clip_resolution||'1080x1920'" @change="updateSetting('clip_resolution', $event.target.value)">
+              <option value="1080x1920">1080x1920</option><option value="720x1280">720x1280</option><option value="1920x1080">1920x1080</option><option value="1080x1080">1080x1080</option>
+            </select>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">水印文本</label>
+          <input class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="留空不加水印" :value="settings.clip_watermark||''" @change="updateSetting('clip_watermark', $event.target.value)"/>
+        </div>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" class="rounded border-outline-variant text-primary focus:ring-primary" :checked="settings.clip_danmaku_overlay" @change="updateSetting('clip_danmaku_overlay', $event.target.checked)"/>
+          <span class="text-xs">弹幕字幕叠加</span>
+        </label>
+      </div>
       <div class="h-px bg-outline-variant/15"></div>
       <!-- Webhook 配置 -->
       <div class="space-y-3">
@@ -785,6 +1290,9 @@ document.addEventListener('DOMContentLoaded',()=>{
                 <option value="generic">Generic</option>
                 <option value="discord">Discord</option>
                 <option value="telegram">Telegram</option>
+                <option value="bark">Bark</option>
+                <option value="pushdeer">PushDeer</option>
+                <option value="serverchan">Server酱</option>
               </select>
               <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Webhook URL" x-model="wh.url"/>
               <button class="text-on-surface-variant hover:text-error text-xs p-1" @click="settings.webhooks.splice(wi,1); updateSetting('webhooks', settings.webhooks)">
@@ -795,6 +1303,11 @@ document.addEventListener('DOMContentLoaded',()=>{
               <div class="flex gap-2">
                 <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Bot Token" x-model="wh.bot_token"/>
                 <input class="w-28 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Chat ID" x-model="wh.chat_id"/>
+              </div>
+            </template>
+            <template x-if="['bark','pushdeer','serverchan'].includes(wh.type)">
+              <div class="flex gap-2">
+                <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" :placeholder="wh.type==='bark'?'Bark Key':wh.type==='pushdeer'?'PushDeer Key':'SendKey'" x-model="wh.key"/>
               </div>
             </template>
             <div class="flex items-center gap-2">
@@ -935,17 +1448,26 @@ document.addEventListener('DOMContentLoaded',()=>{
 <script>
 function app() {
   return {
-    models: [], newModel: '', wsConnected: false, ws: null, thumbTs: Date.now(),
+    models: [], newModel: '', wsConnected: false, ws: null, thumbTs: Date.now(), _recTick: Date.now(),
     showModal: false, modalTitle: '', modalFiles: [], modalUsername: '', modalTab: 'files', modalSessions: [],
+    healthResults: [], healthLoading: false,
+    modalHighlights: [], modalDetecting: false, modalDetectFile: '',
+    manualClipStart: 0, manualClipEnd: 60,
     playingVideo: null, toast: '', toastTimer: null, ticker: null,
     mergeGroups: [], mergeGap: 15, activeMerges: {}, deleteAfterMerge: false, excludedFiles: [],
-    settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false },
-    showSettings: false, diskInfo: { recordings_bytes: 0, free_bytes: 0, total_bytes: 0 },
+    settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true },
+    showSettings: false, diskInfo: { recordings_bytes: 0, free_bytes: 0, total_bytes: 0 }, _lastEventTs: 0,
     addingModel: false, dragOver: false, fileSort: 'time', fileSearch: '', batchMode: false, selectedFiles: [],
     logEntries: [], modalStats: null,
     currentPage: 'streams', networkInfo: {}, systemInfo: {},
+    // V2.0: 高光 + 片段
+    highlightsList: [], highlightFilterUser: '', clipsList: [], clipFilterUser: '',
+    // FlashCut V3
+    uiMode: localStorage.getItem('flashcut_mode') || 'simple',
+    recentClips: [], quotaInfo: { tier: 'free', used_today: 0, daily_limit: 3 },
     showSchedule: false, scheduleUsername: '', scheduleQuality: 'best', scheduleCookies: '', scheduleStreamUrl: '', scheduleData: { enabled: false, start: '20:00', end: '02:00', days: [0,1,2,3,4,5,6] },
     storageBreakdown: [],
+    mergeHistory: [], showMergeHistory: false, dailyStats: [], modalLoading: false,
 
     get sortedModels() {
       const order = { recording: 0, reconnecting: 1, monitoring: 2, error: 3, idle: 4 };
@@ -965,7 +1487,14 @@ function app() {
       // 从 URL 提取 token（用于认证模式）
       this._token = new URLSearchParams(location.search).get('token') || '';
       this.connectWS(); this.fetchModels(); this.fetchSettings(); this.fetchDisk();
-      this.ticker = setInterval(() => { this.models = [...this.models]; }, 5000);
+      // FlashCut: 极简模式初始化
+      if (this.uiMode === 'simple') setTimeout(() => this.loadSimpleMode(), 2000);
+      this.ticker = setInterval(() => {
+        if (this.models.some(m => m.state === 'recording' || m.state === 'reconnecting'))
+          this.models = [...this.models];
+      }, 5000);
+      // 1 秒录制时长刷新
+      setInterval(() => { this._recTick = Date.now(); }, 1000);
       setInterval(() => { this.thumbTs = Date.now(); }, 15000);
       setInterval(() => { this.fetchDisk(); }, 60000);
       if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
@@ -981,27 +1510,38 @@ function app() {
       return fetch(url, opts);
     },
 
-    async fetchSettings() { try { const r = await fetch('/api/settings'); if (r.ok) this.settings = await r.json(); } catch(e) {} },
-    async fetchDisk() { try { const r = await fetch('/api/disk'); if (r.ok) this.diskInfo = await r.json(); } catch(e) {} },
-    async fetchModels() { try { const r = await fetch('/api/models'); if (r.ok) { const d = await r.json(); if (!this.models.length) this.models = d; } } catch(e) {} },
-    async fetchNetwork() { try { const r = await fetch('/api/network'); if (r.ok) this.networkInfo = await r.json(); } catch(e) { this.networkInfo = {}; } },
-    async fetchSystem() { try { const r = await fetch('/api/system'); if (r.ok) this.systemInfo = await r.json(); } catch(e) { this.systemInfo = {}; } },
-    async fetchStorageBreakdown() { try { const r = await fetch('/api/storage/breakdown'); if (r.ok) this.storageBreakdown = await r.json(); } catch(e) { this.storageBreakdown = []; } },
+    async fetchSettings() { try { const r = await this._apiFetch('/api/settings'); if (r.ok) { const s = await r.json(); this.settings = { ...this.settings, ...s }; } } catch(e) {} },
+    async fetchDisk() { try { const r = await this._apiFetch('/api/disk'); if (r.ok) this.diskInfo = await r.json(); } catch(e) {} },
+    async fetchModels() { try { const r = await this._apiFetch('/api/models'); if (r.ok) { const d = await r.json(); if (!this.models.length) this.models = d; } } catch(e) {} },
+    async fetchNetwork() { try { const r = await this._apiFetch('/api/network'); if (r.ok) this.networkInfo = await r.json(); } catch(e) { this.networkInfo = {}; } },
+    async fetchSystem() { try { const r = await this._apiFetch('/api/system'); if (r.ok) this.systemInfo = await r.json(); } catch(e) { this.systemInfo = {}; } },
+    async fetchStorageBreakdown() { try { const r = await this._apiFetch('/api/storage/breakdown'); if (r.ok) this.storageBreakdown = await r.json(); } catch(e) { this.storageBreakdown = []; } },
+    async fetchDailyStats() { try { const r = await this._apiFetch('/api/stats/daily?days=30'); if (r.ok) { const d = await r.json(); this.dailyStats = Array.isArray(d) ? d : []; } } catch(e) { this.dailyStats = []; } },
 
     async updateSetting(key, value) {
       this.settings[key] = value;
-      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: value }) });
+      await this._apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: value }) });
     },
 
     connectWS() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const tokenParam = this._token ? `?token=${this._token}` : '';
       try { this.ws = new WebSocket(`${proto}//${location.host}/ws${tokenParam}`); } catch(e) { return; }
-      this.ws.onopen = () => { this.wsConnected = true; this._wsRetryDelay = 3000; };
+      this.ws.onopen = () => {
+        this.wsConnected = true; this._wsRetryDelay = 3000;
+        // 断线恢复：获取遗漏事件
+        if (this._lastEventTs) {
+          this._apiFetch(`/api/events/since?ts=${this._lastEventTs}`).then(r => r.json()).then(events => {
+            events.forEach(e => { if (e._ts) this._lastEventTs = e._ts; });
+            this.fetchModels();
+          }).catch(() => {});
+        }
+      };
       this.ws.onclose = () => { this.wsConnected = false; if (this._keepalive) { clearInterval(this._keepalive); this._keepalive = null; } const d = this._wsRetryDelay || 3000; setTimeout(() => this.connectWS(), d); this._wsRetryDelay = Math.min((d||3000)*2, 30000); };
       this.ws.onerror = () => { this.wsConnected = false; };
       this.ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
+        let msg; try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg._ts) this._lastEventTs = msg._ts;
         if (msg.type === 'init') { this.models = msg.data; }
         else if (msg.type === 'model_update') {
           const idx = this.models.findIndex(m => m.username === msg.data.username);
@@ -1017,17 +1557,53 @@ function app() {
         else if (msg.type === 'merge_done') {
           this.activeMerges[msg.data.merge_id] = { status: 'done', progress: 1 };
           const detail = msg.data.input_count ? `${msg.data.input_count} 个片段 (${this.fmtSize(msg.data.input_size)})` : '';
-          this.showToast(`${msg.data.username||''} 合并完成: ${msg.data.filename||''} ${detail}`);
+          const savings = msg.data.savings_pct > 0 ? ` · 节省 ${this.fmtSize(msg.data.savings_bytes)} (${msg.data.savings_pct}%)` : '';
+          this.showToast(`${msg.data.username||''} 合并完成: ${msg.data.filename||''} ${detail}${savings}`);
           this.desktopNotify(`${msg.data.username||''} 合并完成`, msg.data.filename||'');
           if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
         }
         else if (msg.type === 'merge_error') { this.activeMerges[msg.data.merge_id] = { status: 'error' }; this.showToast('合并失败: '+(msg.data.error||'未知错误')); if (this.showModal && this.modalTab==='sessions') this.loadSessions(); }
-        else if (msg.type === 'merge_progress') { const d = msg.data; this.activeMerges[d.merge_id] = { ...this.activeMerges[d.merge_id], status: 'running', progress: d.progress }; }
+        else if (msg.type === 'merge_progress') { const d = msg.data; this.activeMerges[d.merge_id] = { ...this.activeMerges[d.merge_id], status: 'running', progress: d.progress, message: d.message || '' }; }
         else if (msg.type === 'auto_merge_done') {
           if (msg.data.filename) { this.showToast(`${msg.data.username} 已自动合并 → ${msg.data.filename}`); this.desktopNotify(`${msg.data.username} 自动合并完成`, msg.data.filename); }
           if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
         }
-        else if (msg.type === 'settings_update') { this.settings = msg.data; }
+        else if (msg.type === 'segment_warning') {
+          const d = msg.data;
+          this.showToast(`${d.username} 发现 ${(d.skipped_files||[]).length} 个损坏片段`);
+        }
+        else if (msg.type === 'highlight_detected') {
+          const d = msg.data;
+          this.showToast(`${d.username} 检测到 ${d.count} 个高光片段`);
+          this.desktopNotify(`${d.username} 高光检测完成`, `发现 ${d.count} 个高光片段`);
+          if (this.currentPage === 'highlights') this.fetchHighlights();
+        }
+        else if (msg.type === 'clip_done') {
+          const d = msg.data;
+          this.showToast(`${d.username} 片段生成完成: ${d.filename||''}`);
+          if (this.currentPage === 'clips') this.fetchClips();
+        }
+        else if (msg.type === 'clip_progress') {
+          const d = msg.data;
+          this.showToast(`${d.username} 生成片段 ${d.current}/${d.total}`);
+        }
+        else if (msg.type === 'flashcut_progress') {
+          this.showToast(msg.data.message || 'FlashCut 处理中...');
+        }
+        else if (msg.type === 'flashcut_done') {
+          const d = msg.data;
+          this.showToast(`${d.username} FlashCut 完成！生成了 ${d.count} 条短视频`);
+          this.desktopNotify('FlashCut 完成', `${d.username} 生成了 ${d.count} 条短视频`);
+          if (this.uiMode === 'simple') this.loadSimpleMode();
+          if (this.currentPage === 'clips') this.fetchClips();
+          if (this.currentPage === 'highlights') this.fetchHighlights();
+        }
+        else if (msg.type === 'settings_update') { this.settings = { ...this.settings, ...msg.data }; }
+        else if (msg.type === 'disk_warning') {
+          this.showToast(`磁盘空间不足: ${msg.data.free_mb}MB 剩余` + (msg.data.critical ? ' (紧急)' : ''));
+          if (msg.data.critical) this.desktopNotify('磁盘空间紧急', `仅剩 ${msg.data.free_mb}MB，录制已停止`);
+          this.fetchDisk();
+        }
       };
       if (!this._keepalive) { this._keepalive = setInterval(() => { if (this.ws?.readyState === WebSocket.OPEN) this.ws.send('ping'); }, 25000); }
     },
@@ -1040,25 +1616,25 @@ function app() {
       let added = 0;
       try {
         for (const url of urls) {
-          const r = await fetch('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+          const r = await this._apiFetch('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
           if (r.ok) { added++; const d = await r.json(); if (urls.length === 1) this.showToast(`已添加 ${d.username}`); }
           else if (urls.length === 1) { const err = await r.json().catch(()=>({})); this.showToast('添加失败: '+(err.detail||'未知错误')); }
         }
         if (added > 0) { this.newModel = ''; if (urls.length > 1) this.showToast(`已添加 ${added} 个主播`); }
       } catch(e) { this.showToast('添加失败: 网络错误'); } finally { this.addingModel = false; }
     },
-    async removeModel(u) { if (!confirm(`删除 ${u}？`)) return; await fetch(`/api/models/${u}`, { method: 'DELETE' }); this.showToast(`已删除 ${u}`); },
-    async startModel(u) { await fetch(`/api/models/${u}/start`, { method: 'POST' }); },
-    async stopModel(u) { await fetch(`/api/models/${u}/stop`, { method: 'POST' }); },
-    async startAll() { await fetch('/api/start-all', { method: 'POST' }); this.showToast('全部启动'); },
-    async stopAll() { await fetch('/api/stop-all', { method: 'POST' }); this.showToast('全部停止'); },
+    async removeModel(u) { if (!confirm(`删除 ${u}？`)) return; const r = await this._apiFetch(`/api/models/${u}`, { method: 'DELETE' }); if (r.ok) this.showToast(`已删除 ${u}`); else this.showToast('删除失败'); },
+    async startModel(u) { await this._apiFetch(`/api/models/${u}/start`, { method: 'POST' }); },
+    async stopModel(u) { await this._apiFetch(`/api/models/${u}/stop`, { method: 'POST' }); },
+    async startAll() { await this._apiFetch('/api/start-all', { method: 'POST' }); this.showToast('全部启动'); },
+    async stopAll() { await this._apiFetch('/api/stop-all', { method: 'POST' }); this.showToast('全部停止'); },
 
     async toggleModelAutoMerge(username, currentState) {
       const ns = !currentState;
       const m = this.models.find(m => m.username === username);
       if (m) m.auto_merge = ns; // 乐观更新
       try {
-        const r = await fetch(`/api/models/${username}/auto-merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto_merge: ns }) });
+        const r = await this._apiFetch(`/api/models/${username}/auto-merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto_merge: ns }) });
         if (!r.ok) throw new Error('API error');
         this.showToast(`${username} 自动合并: ${ns?'开':'关'}`);
       } catch(e) {
@@ -1076,35 +1652,283 @@ function app() {
     toggleBatchSelect(fn) { const i = this.selectedFiles.indexOf(fn); if (i >= 0) this.selectedFiles.splice(i, 1); else this.selectedFiles.push(fn); },
     async batchDelete() {
       if (!this.selectedFiles.length) return; if (!confirm(`删除选中的 ${this.selectedFiles.length} 个文件？`)) return;
-      for (const fn of this.selectedFiles) await fetch(`/api/recordings/${this.modalUsername}/${fn}`, { method: 'DELETE' });
+      for (const fn of this.selectedFiles) await this._apiFetch(`/api/recordings/${this.modalUsername}/${fn}`, { method: 'DELETE' });
       this.showToast(`已删除 ${this.selectedFiles.length} 个文件`); this.selectedFiles = []; this.batchMode = false; await this.openRecordings(this.modalUsername);
     },
 
     async openRecordings(username) {
       this.modalUsername = username; this.modalTitle = username; this.playingVideo = null; this.modalStats = null;
       if (!this.showModal) { this.modalTab = 'files'; this.activeMerges = {}; this.excludedFiles = []; }
-      const r = await fetch(`/api/recordings/${username}`); this.modalFiles = await r.json(); this.showModal = true;
-      fetch(`/api/stats/${username}`).then(r=>r.json()).then(d=>this.modalStats=d).catch(()=>{});
+      this.modalLoading = true; this.showModal = true;
+      try {
+        const r = await this._apiFetch(`/api/recordings/${username}`); this.modalFiles = await r.json();
+        this._apiFetch(`/api/stats/${username}`).then(r=>r.json()).then(d=>this.modalStats=d).catch(()=>{});
+      } catch(e) { this.modalFiles = []; }
+      this.modalLoading = false;
     },
     playVideo(f) { this.playingVideo = `/api/video/${this.modalUsername}/${f.filename}`; },
-    async deleteFile(fn) { if (!confirm(`删除 ${fn}？`)) return; const r = await fetch(`/api/recordings/${this.modalUsername}/${fn}`, { method: 'DELETE' }); if (r.ok) { this.modalFiles = this.modalFiles.filter(f=>f.filename!==fn); if (this.playingVideo?.includes(fn)) this.playingVideo = null; this.showToast(`已删除 ${fn}`); } },
+    async deleteFile(fn) { if (!confirm(`删除 ${fn}？`)) return; const r = await this._apiFetch(`/api/recordings/${this.modalUsername}/${fn}`, { method: 'DELETE' }); if (r.ok) { this.modalFiles = this.modalFiles.filter(f=>f.filename!==fn); if (this.playingVideo?.includes(fn)) this.playingVideo = null; this.showToast(`已删除 ${fn}`); } },
     async renameFile(fn) {
       const newName = prompt('重命名文件:', fn.replace('.mp4',''));
       if (!newName || newName === fn.replace('.mp4','')) return;
       try {
-        const r = await fetch(`/api/recordings/${this.modalUsername}/${fn}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new_name: newName }) });
+        const r = await this._apiFetch(`/api/recordings/${this.modalUsername}/${fn}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new_name: newName }) });
         const d = await r.json();
         if (r.ok) { this.showToast(`已重命名为 ${d.new_name}`); await this.openRecordings(this.modalUsername); }
         else this.showToast('重命名失败: ' + (d.error || '未知错误'));
       } catch(e) { this.showToast('重命名失败'); }
     },
 
-    async loadSessions() { try { const r = await fetch(`/api/sessions/${this.modalUsername}`); if (!r.ok) { this.modalSessions=[]; return; } this.modalSessions = (await r.json()).reverse(); } catch(e) { this.modalSessions=[]; } },
+    async loadSessions() {
+      try { const r = await this._apiFetch(`/api/sessions/${this.modalUsername}`); if (!r.ok) { this.modalSessions=[]; return; } this.modalSessions = (await r.json()).reverse(); } catch(e) { this.modalSessions=[]; }
+      // 同时加载合并历史
+      try { const r = await this._apiFetch(`/api/merge-history/${this.modalUsername}`); if (r.ok) this.mergeHistory = await r.json(); else this.mergeHistory = []; } catch(e) { this.mergeHistory = []; }
+    },
+    async loadHealthCheck() {
+      this.healthLoading = true; this.healthResults = [];
+      try {
+        const r = await this._apiFetch(`/api/recordings/${this.modalUsername}/health`);
+        if (r.ok) this.healthResults = await r.json();
+      } catch(e) { this.healthResults = []; }
+      this.healthLoading = false;
+    },
+    async loadModalHighlights() {
+      this.modalHighlights = [];
+      try {
+        const r = await this._apiFetch(`/api/highlights/${this.modalUsername}`);
+        if (r.ok) this.modalHighlights = await r.json();
+      } catch(e) {}
+    },
+    async detectModalHighlights() {
+      this.modalDetecting = true;
+      try {
+        const body = this.modalDetectFile ? { filename: this.modalDetectFile } : {};
+        const r = await this._apiFetch(`/api/highlights/${this.modalUsername}/detect`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.showToast(`检测到 ${d.count} 个高光`);
+          await this.loadModalHighlights();
+        } else {
+          this.showToast('检测失败: ' + (d.error || ''));
+        }
+      } catch(e) { this.showToast('检测请求失败'); }
+      this.modalDetecting = false;
+    },
+    async createManualClip() {
+      if (this.manualClipEnd <= this.manualClipStart) { this.showToast('结束时间必须大于开始时间'); return; }
+      const filename = this.modalDetectFile || (this.modalFiles[0]?.filename || '');
+      if (!filename) { this.showToast('请选择视频文件'); return; }
+      this.showToast('正在生成片段...');
+      try {
+        const r = await this._apiFetch('/api/clips/manual', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: this.modalUsername, filename, start_time: this.manualClipStart, end_time: this.manualClipEnd })
+        });
+        const d = await r.json();
+        if (d.status === 'done') this.showToast('片段生成完成');
+        else this.showToast('生成失败: ' + (d.error || ''));
+      } catch(e) { this.showToast('生成请求失败'); }
+    },
+
+    // ========== V2.0: 高光 + 片段 ==========
+    async fetchHighlights() {
+      const user = this.highlightFilterUser;
+      if (!user) {
+        // 获取所有主播的高光
+        let all = [];
+        for (const m of this.models) {
+          try {
+            const r = await this._apiFetch(`/api/highlights/${m.username}`);
+            if (r.ok) { const d = await r.json(); all = all.concat(d); }
+          } catch(e) {}
+        }
+        this.highlightsList = all.sort((a,b) => (b.created_at||0) - (a.created_at||0));
+      } else {
+        try {
+          const r = await this._apiFetch(`/api/highlights/${user}`);
+          if (r.ok) this.highlightsList = await r.json();
+          else this.highlightsList = [];
+        } catch(e) { this.highlightsList = []; }
+      }
+    },
+    async detectHighlightsForUser() {
+      const user = this.highlightFilterUser;
+      if (!user) { this.showToast('请先选择主播'); return; }
+      this.showToast('正在检测高光...');
+      try {
+        const r = await this._apiFetch(`/api/highlights/${user}/detect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await r.json();
+        if (d.ok) { this.showToast(`检测到 ${d.count} 个高光片段`); await this.fetchHighlights(); }
+        else this.showToast('检测失败: ' + (d.error || '未知错误'));
+      } catch(e) { this.showToast('检测请求失败'); }
+    },
+    async generateClipFromHighlight(highlightId) {
+      this.showToast('正在生成片段...');
+      try {
+        const r = await this._apiFetch(`/api/highlights/item/${highlightId}/clip`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await r.json();
+        if (d.status === 'done') { this.showToast('片段生成完成'); await this.fetchHighlights(); }
+        else this.showToast('生成失败: ' + (d.error || '未知错误'));
+      } catch(e) { this.showToast('生成请求失败'); }
+    },
+    async batchGenerateClips() {
+      const ids = this.highlightsList.filter(h => h.status === 'detected').map(h => h.highlight_id);
+      if (!ids.length) return;
+      if (!confirm(`确认生成 ${ids.length} 个片段？`)) return;
+      this.showToast(`正在批量生成 ${ids.length} 个片段...`);
+      try {
+        const r = await this._apiFetch('/api/highlights/batch-clip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ highlight_ids: ids }) });
+        const d = await r.json();
+        if (d.ok) { this.showToast(`完成: ${d.done}/${d.total} 个片段`); await this.fetchHighlights(); }
+        else this.showToast('批量生成失败');
+      } catch(e) { this.showToast('批量生成请求失败'); }
+    },
+    async deleteHighlight(highlightId) {
+      if (!confirm('确认删除此高光？')) return;
+      try { await this._apiFetch(`/api/highlights/item/${highlightId}`, { method: 'DELETE' }); await this.fetchHighlights(); } catch(e) {}
+    },
+    playHighlight(h) {
+      this.playingVideo = `/api/video/${h.username}/${h.video_file}#t=${h.start_time}`;
+    },
+    async fetchClips() {
+      const user = this.clipFilterUser;
+      if (!user) {
+        let all = [];
+        for (const m of this.models) {
+          try {
+            const r = await this._apiFetch(`/api/clips/${m.username}`);
+            if (r.ok) { const d = await r.json(); all = all.concat(d); }
+          } catch(e) {}
+        }
+        this.clipsList = all.sort((a,b) => (b.created_at||0) - (a.created_at||0));
+      } else {
+        try {
+          const r = await this._apiFetch(`/api/clips/${user}`);
+          if (r.ok) this.clipsList = await r.json();
+          else this.clipsList = [];
+        } catch(e) { this.clipsList = []; }
+      }
+    },
+    async deleteClip(clipId) {
+      if (!confirm('确认删除此片段？')) return;
+      try { await this._apiFetch(`/api/clips/item/${clipId}`, { method: 'DELETE' }); await this.fetchClips(); } catch(e) {}
+    },
+    fmtTimestamp(seconds) {
+      if (!seconds) return '0:00';
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `${m}:${s.toString().padStart(2, '0')}`;
+    },
+
+    // ========== FlashCut V3 ==========
+    toggleUIMode() {
+      this.uiMode = this.uiMode === 'simple' ? 'advanced' : 'simple';
+      localStorage.setItem('flashcut_mode', this.uiMode);
+      if (this.uiMode === 'simple') this.loadSimpleMode();
+    },
+    async loadSimpleMode() {
+      // 加载最近片段
+      try {
+        let all = [];
+        for (const m of this.models.slice(0, 10)) {
+          try {
+            const r = await this._apiFetch(`/api/clips/${m.username}?limit=5`);
+            if (r.ok) { const d = await r.json(); all = all.concat(d); }
+          } catch(e) {}
+        }
+        this.recentClips = all.sort((a,b) => (b.created_at||0) - (a.created_at||0)).slice(0, 20);
+      } catch(e) {}
+      // 加载配额
+      if (this.models.length > 0) {
+        try {
+          const r = await this._apiFetch(`/api/quota/${this.models[0].username}`);
+          if (r.ok) this.quotaInfo = await r.json();
+        } catch(e) {}
+      }
+    },
+    async triggerFlashCut(username) {
+      this.showToast('FlashCut 流水线启动中...');
+      try {
+        const r = await this._apiFetch(`/api/flashcut/${username}/auto`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await r.json();
+        if (d.ok) this.showToast(d.message || '已启动');
+        else this.showToast('启动失败: ' + (d.error || ''));
+      } catch(e) { this.showToast('请求失败'); }
+    },
+    async startModel(username) {
+      try { await this._apiFetch(`/api/models/${username}/start`, { method: 'POST' }); } catch(e) {}
+    },
+    async stopModel(username) {
+      try { await this._apiFetch(`/api/models/${username}/stop`, { method: 'POST' }); } catch(e) {}
+    },
+
     async mergeSession(sid) {
       this.activeMerges[sid] = { status: 'running', progress: 0 };
-      try { const r = await fetch(`/api/sessions/${this.modalUsername}/${sid}/merge`, { method: 'POST' }); const d = await r.json(); if (!r.ok) { this.activeMerges[sid]={status:'error'}; this.showToast('合并失败: '+(d.error||'未知错误')); } else if (d.status==='done') { this.activeMerges[sid]={status:'done',progress:1}; this.showToast('会话合并完成'); await this.loadSessions(); await this.openRecordings(this.modalUsername); } } catch(e) { this.activeMerges[sid]={status:'error'}; this.showToast('合并请求失败'); }
+      try { const r = await this._apiFetch(`/api/sessions/${this.modalUsername}/${sid}/merge`, { method: 'POST' }); const d = await r.json(); if (!r.ok) { this.activeMerges[sid]={status:'error'}; this.showToast('合并失败: '+(d.error||'未知错误')); } else if (d.status==='done') { this.activeMerges[sid]={status:'done',progress:1}; this.showToast('会话合并完成'); await this.loadSessions(); await this.openRecordings(this.modalUsername); } } catch(e) { this.activeMerges[sid]={status:'error'}; this.showToast('合并请求失败'); }
     },
-    async loadGroups() { try { const r = await fetch(`/api/recordings/${this.modalUsername}/groups?gap=${this.mergeGap}`); if (!r.ok) { this.mergeGroups=[]; return; } this.mergeGroups = await r.json(); } catch(e) { this.mergeGroups=[]; } },
+    async mergeAllEndedSessions() {
+      if (!confirm('确认合并所有待合并会话？')) return;
+      this.showToast('正在批量合并...');
+      try {
+        const r = await this._apiFetch('/api/sessions/merge-all-ended', { method: 'POST' });
+        const d = await r.json();
+        this.showToast(`批量合并完成: ${d.merged} 个会话`);
+        if (this.showModal) { await this.loadSessions(); await this.openRecordings(this.modalUsername); }
+        this.fetchStorageBreakdown();
+      } catch(e) { this.showToast('批量合并失败'); }
+    },
+    async batchMergeAllEnded() {
+      if (!confirm('确认合并所有主播的待合并会话？')) return;
+      this.showToast('正在批量合并...');
+      try {
+        const r = await this._apiFetch('/api/sessions/merge-all-ended', { method: 'POST' });
+        const d = await r.json();
+        this.showToast(`批量合并完成: ${d.merged} 个会话`);
+        this.fetchStorageBreakdown(); this.fetchDisk();
+      } catch(e) { this.showToast('批量合并失败'); }
+    },
+    async batchCleanupMerged() {
+      if (!confirm('确认清理所有已合并的原始片段文件？此操作不可撤销。')) return;
+      try {
+        const r = await this._apiFetch('/api/recordings/cleanup-merged', { method: 'POST' });
+        const d = await r.json();
+        this.showToast(`已清理 ${d.cleaned} 个文件，释放 ${d.freed_mb} MB`);
+        this.fetchStorageBreakdown(); this.fetchDisk();
+      } catch(e) { this.showToast('清理失败'); }
+    },
+    async retryFailedMerges() {
+      if (!confirm('确认重试所有失败的合并会话？')) return;
+      this.showToast('正在重试失败合并...');
+      try {
+        const r = await this._apiFetch('/api/sessions/retry-failed', { method: 'POST' });
+        const d = await r.json();
+        this.showToast(`已重试 ${d.retried} 个会话`);
+        this.fetchStorageBreakdown();
+      } catch(e) { this.showToast('重试失败'); }
+    },
+    async cancelMerge(username, mergeId) {
+      try {
+        const r = await this._apiFetch(`/api/recordings/${username}/merge/${mergeId}/cancel`, { method: 'POST' });
+        if (r.ok) {
+          this.activeMerges[mergeId] = { status: 'cancelled' };
+          this.showToast('合并已取消');
+          if (this.modalTab === 'sessions') this.loadSessions();
+        } else { this.showToast('取消失败'); }
+      } catch(e) { this.showToast('取消失败'); }
+    },
+    getSegmentFlex(seg, nextSeg, session) {
+      // 根据文件名时间戳计算相对宽度
+      try {
+        const parseTs = fn => { const m = fn.replace('.mp4','').match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/); return m ? new Date(m[1],m[2]-1,m[3],m[4],m[5],m[6]).getTime()/1000 : 0; };
+        const start = parseTs(seg);
+        const end = nextSeg ? parseTs(nextSeg) : (session.ended_at || start + 300);
+        const dur = Math.max(end - start, 60);
+        return Math.max(dur, 1);
+      } catch(e) { return 1; }
+    },
+    async loadGroups() { try { const r = await this._apiFetch(`/api/recordings/${this.modalUsername}/groups?gap=${this.mergeGap}`); if (!r.ok) { this.mergeGroups=[]; return; } this.mergeGroups = await r.json(); } catch(e) { this.mergeGroups=[]; } },
     toggleExclude(fn) { const i = this.excludedFiles.indexOf(fn); if (i>=0) this.excludedFiles.splice(i,1); else this.excludedFiles.push(fn); },
     async doMerge(group) {
       if (!group?.files?.length) { this.showToast('无效的分组数据'); return; }
@@ -1112,7 +1936,7 @@ function app() {
       if (files.length<2) { this.showToast('至少需要选择2个片段'); return; }
       if (!confirm(`确认合并 ${files.length} 个片段？${this.deleteAfterMerge?'\n合并后将删除原文件！':''}`)) return;
       this.activeMerges[group.id] = { status: 'running' };
-      try { const r = await fetch(`/api/recordings/${this.modalUsername}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files, delete_originals: this.deleteAfterMerge }) }); const d = await r.json(); if (!r.ok) { this.activeMerges[group.id]={status:'error'}; this.showToast('合并失败: '+(d.error||'未知错误')); } else if (d.status==='done') { this.activeMerges[group.id]={status:'done'}; this.showToast('合并完成'); await this.openRecordings(this.modalUsername); } } catch(e) { this.activeMerges[group.id]={status:'error'}; this.showToast('合并请求失败'); }
+      try { const r = await this._apiFetch(`/api/recordings/${this.modalUsername}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files, delete_originals: this.deleteAfterMerge }) }); const d = await r.json(); if (!r.ok) { this.activeMerges[group.id]={status:'error'}; this.showToast('合并失败: '+(d.error||'未知错误')); } else if (d.status==='done') { this.activeMerges[group.id]={status:'done'}; this.showToast('合并完成'); await this.openRecordings(this.modalUsername); } } catch(e) { this.activeMerges[group.id]={status:'error'}; this.showToast('合并请求失败'); }
     },
     async mergeAll() {
       const groups = this.mergeGroups.filter(g=>!this.activeMerges[g.id]||this.activeMerges[g.id]?.status==='error');
@@ -1120,19 +1944,66 @@ function app() {
       for (let i=0;i<groups.length;i++) {
         const g=groups[i]; const files=g.files.map(f=>f.filename).filter(fn=>!this.excludedFiles.includes(fn)); if (files.length<2) continue;
         this.activeMerges[g.id]={status:'running'}; this.showToast(`合并中 ${i+1}/${groups.length}...`);
-        try { const r = await fetch(`/api/recordings/${this.modalUsername}/merge`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({files,delete_originals:this.deleteAfterMerge}) }); const d=await r.json(); if (r.ok&&d.status==='done') this.activeMerges[g.id]={status:'done'}; else if (!r.ok) this.activeMerges[g.id]={status:'error'}; } catch(e) { this.activeMerges[g.id]={status:'error'}; }
+        try { const r = await this._apiFetch(`/api/recordings/${this.modalUsername}/merge`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({files,delete_originals:this.deleteAfterMerge}) }); const d=await r.json(); if (r.ok&&d.status==='done') this.activeMerges[g.id]={status:'done'}; else if (!r.ok) this.activeMerges[g.id]={status:'error'}; } catch(e) { this.activeMerges[g.id]={status:'error'}; }
       }
       this.showToast('全部合并完成'); await this.openRecordings(this.modalUsername);
     },
 
-    async loadLogs() { try { const r = await fetch('/api/logs?limit=300'); if (r.ok) this.logEntries = await r.json(); } catch(e) { this.logEntries=['加载日志失败']; } },
+    async loadLogs() { try { const r = await this._apiFetch('/api/logs?limit=300'); if (r.ok) this.logEntries = await r.json(); } catch(e) { this.logEntries=['加载日志失败']; } },
 
     async testWebhook(wh) {
       try {
-        const r = await fetch('/api/webhooks/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wh) });
+        const r = await this._apiFetch('/api/webhooks/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wh) });
         const d = await r.json();
-        this.showToast(d.ok ? 'Webhook 测试成功' : 'Webhook 测试失败');
+        this.showToast(d.ok ? 'Webhook 测试成功' : ('Webhook 测试失败' + (d.error ? ': '+d.error : '')));
       } catch(e) { this.showToast('Webhook 测试失败: 网络错误'); }
+    },
+
+    async testPostScript() {
+      const script = this.settings.post_process_script;
+      if (!script) { this.showToast('请先设置脚本路径'); return; }
+      try {
+        const r = await this._apiFetch('/api/post-script/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script }) });
+        const d = await r.json();
+        if (d.ok) this.showToast(`脚本测试成功 (exit ${d.exit_code})`);
+        else this.showToast(`脚本测试失败: ${d.error || d.stderr || '未知错误'}`);
+      } catch(e) { this.showToast('脚本测试失败: 网络错误'); }
+    },
+
+    async exportConfig() {
+      try {
+        const r = await this._apiFetch('/api/config/export');
+        const d = await r.json();
+        const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `streamvideo_config_${new Date().toISOString().slice(0,10)}.json`;
+        a.click(); URL.revokeObjectURL(url);
+        this.showToast('配置已导出');
+      } catch(e) { this.showToast('导出失败'); }
+    },
+
+    async importConfig(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const config = JSON.parse(text);
+        const r = await this._apiFetch('/api/config/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+        const d = await r.json();
+        if (d.ok) {
+          this.showToast(`导入成功: ${d.imported_settings} 项设置, ${d.imported_models} 个主播`);
+          await this.fetchModels(); await this.fetchSettings();
+        } else { this.showToast(`导入失败: ${d.error}`); }
+      } catch(e) { this.showToast('导入失败: 文件格式错误'); }
+      event.target.value = '';
+    },
+
+    async mergePreview(username, files) {
+      try {
+        const r = await this._apiFetch(`/api/recordings/${username}/merge/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: files || [] }) });
+        return await r.json();
+      } catch(e) { return null; }
     },
 
     async openSchedule(username) {
@@ -1142,7 +2013,7 @@ function app() {
       this.scheduleCookies = m?.custom_cookies || '';
       this.scheduleStreamUrl = m?.custom_stream_url || '';
       try {
-        const r = await fetch(`/api/models/${username}/schedule`);
+        const r = await this._apiFetch(`/api/models/${username}/schedule`);
         if (r.ok) {
           const d = await r.json();
           this.scheduleData = d.schedule || { enabled: false, start: '20:00', end: '02:00', days: [0,1,2,3,4,5,6] };
@@ -1157,19 +2028,19 @@ function app() {
       try {
         // 保存质量
         if (this.scheduleQuality) {
-          await fetch(`/api/models/${this.scheduleUsername}/quality`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quality: this.scheduleQuality }) });
+          await this._apiFetch(`/api/models/${this.scheduleUsername}/quality`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quality: this.scheduleQuality }) });
           const m = this.models.find(m => m.username === this.scheduleUsername);
           if (m) m.quality = this.scheduleQuality;
         }
         // 保存 cookie 和流地址
         if (this.scheduleCookies !== undefined) {
-          await fetch(`/api/models/${this.scheduleUsername}/cookies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cookies: this.scheduleCookies }) });
+          await this._apiFetch(`/api/models/${this.scheduleUsername}/cookies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cookies: this.scheduleCookies }) });
         }
         if (this.scheduleStreamUrl !== undefined) {
-          await fetch(`/api/models/${this.scheduleUsername}/stream-url`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stream_url: this.scheduleStreamUrl }) });
+          await this._apiFetch(`/api/models/${this.scheduleUsername}/stream-url`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stream_url: this.scheduleStreamUrl }) });
         }
         // 保存定时计划
-        await fetch(`/api/models/${this.scheduleUsername}/schedule`, {
+        await this._apiFetch(`/api/models/${this.scheduleUsername}/schedule`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ schedule: this.scheduleData }),
         });
@@ -1182,7 +2053,7 @@ function app() {
 
     async setQuality(username, quality) {
       try {
-        await fetch(`/api/models/${username}/quality`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quality }) });
+        await this._apiFetch(`/api/models/${username}/quality`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quality }) });
         const m = this.models.find(m => m.username === username);
         if (m) m.quality = quality;
         this.showToast(`${username} 质量: ${quality}`);
@@ -1195,13 +2066,13 @@ function app() {
     sessionStatusText(s) { return {active:'录制中',ended:'待合并',merging:'合并中',merged:'已合并',error:'错误'}[s]||s; },
     stateText(s) { return {idle:'未启动',monitoring:'监控中',recording:'录制中',reconnecting:'重连中',error:'错误'}[s]||s; },
     statusText(s) { return {offline:'离线',public:'在线',private:'私密',group:'团体秀',away:'离开',unknown:'检测中'}[s]||s; },
-    fmtSize(b) { if (!b) return '-'; const u=['B','KB','MB','GB','TB']; let i=0; while(b>=1024&&i<4){b/=1024;i++;} return b.toFixed(i>0?1:0)+' '+u[i]; },
+    fmtSize(b) { if (!b || b < 0) return '-'; const u=['B','KB','MB','GB','TB']; let i=0; while(b>=1024&&i<4){b/=1024;i++;} return b.toFixed(i>0?1:0)+' '+u[i]; },
     fmtDur(s) { if (!s) return '-'; const h=Math.floor(s/3600),m=Math.floor(s%3600/60),sec=Math.floor(s%60); return h>0?`${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; },
     fmtDate(ts) { if (!ts) return ''; const d=new Date(ts*1000); return d.toLocaleDateString('zh-CN')+' '+d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}); },
     fmtSessionTime(start, end) { if (!start) return ''; const s=new Date(start*1000); const t=s.toLocaleDateString('zh-CN')+' '+s.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}); if (end) { const dur=end-start; const h=Math.floor(dur/3600),m=Math.floor(dur%3600/60); return `${t} (${h>0?h+'h':''}${m}m)`; } return t; },
     getFileSize(fn) { const f=this.modalFiles.find(f=>f.filename===fn); return f?this.fmtSize(f.size):''; },
     nameColor(name) { let h=0; for(let i=0;i<name.length;i++) h=name.charCodeAt(i)+((h<<5)-h); h=((h%360)+360)%360; return `hsl(${h},35%,25%)`; },
-    ago(ts) { if (!ts) return ''; const d=Math.floor(Date.now()/1000-ts); if (d<10) return '刚刚'; if (d<60) return d+'秒前'; if (d<3600) return Math.floor(d/60)+'分钟前'; return Math.floor(d/3600)+'小时前'; },
+    ago(ts) { if (!ts) return ''; const d=Math.floor(Date.now()/1000-ts); if (d<0) return '刚刚'; if (d<10) return '刚刚'; if (d<60) return d+'秒前'; if (d<3600) return Math.floor(d/60)+'分钟前'; return Math.floor(d/3600)+'小时前'; },
   };
 }
 </script>
