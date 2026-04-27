@@ -5,10 +5,6 @@
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>The Orchestrator | StreamVideo</title>
 <link href="/static/styles.css" rel="stylesheet"/>
-<link rel="manifest" href="/static/manifest.json"/>
-<meta name="theme-color" content="#6c5ce7"/>
-<meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 <!-- Icons: self-hosted inline SVG (zero external dependency) -->
 <script>
@@ -103,8 +99,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 <!-- ===== TOP NAV ===== -->
 <nav class="fixed top-0 w-full z-50 flex justify-between items-center px-4 h-14 bg-surface border-b border-outline-variant/15 tracking-tight">
   <div class="flex items-center gap-4">
-    <span class="text-lg font-black tracking-tighter uppercase ml-14 md:ml-0" x-text="uiMode==='simple'?'FlashCut':'The Orchestrator'"></span>
-    <button class="text-[10px] px-2 py-1 rounded-full border border-outline-variant/20 text-on-surface-variant hover:text-primary transition-colors" @click="toggleUIMode()" x-text="uiMode==='simple'?'高级模式':'极简模式'"></button>
+    <span class="text-lg font-black tracking-tighter uppercase ml-14 md:ml-0">The Orchestrator</span>
   </div>
   <div class="flex items-center gap-3">
     <div class="hidden md:flex items-center gap-2.5 px-3 py-1 bg-surface-container rounded-full text-[11px] font-medium border border-outline-variant/10">
@@ -129,12 +124,68 @@ document.addEventListener('DOMContentLoaded',()=>{
       <button class="px-3 py-1 bg-gradient-to-br from-primary-container to-primary text-on-primary-container text-[11px] font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="startAll()" aria-label="全部启动">全部启动</button>
       <button class="px-3 py-1 bg-surface-container-highest text-on-surface text-[11px] font-bold rounded border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all" @click="stopAll()" aria-label="全部停止">全部停止</button>
       <span class="material-symbols-outlined cursor-pointer hover:bg-surface-container-highest p-1.5 rounded-full transition-all text-on-surface-variant text-xl" @click="showSettings=true" role="button" aria-label="设置">settings</span>
+      <!-- 用户菜单 -->
+      <div class="relative" x-show="authUser" x-cloak>
+        <button class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-surface-container-highest text-[11px] font-bold hover:bg-surface-bright transition-all" @click="showUserMenu=!showUserMenu">
+          <span class="material-symbols-outlined text-sm">person</span>
+          <span x-text="authUser?.display_name||'用户'"></span>
+        </button>
+        <div class="absolute right-0 top-full mt-1 w-52 bg-surface-container border border-outline-variant/20 rounded-lg shadow-xl py-1 z-50" x-show="showUserMenu" x-cloak @click.outside="showUserMenu=false">
+          <div class="px-3 py-2 text-[10px] text-on-surface-variant border-b border-outline-variant/10" x-text="authUser?.email||''"></div>
+          <div class="px-3 py-2 text-[10px] flex items-center justify-between">
+            <span class="text-on-surface-variant">套餐: <span class="font-bold text-primary" x-text="({free:'免费版',pro:'专业版',team:'团队版'})[authUser?.tier||'free']||'免费版'"></span></span>
+            <button x-show="(authUser?.tier||'free')==='free'" class="text-[10px] font-bold text-white bg-primary px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity" @click="showUserMenu=false; currentPage='system'" title="升级套餐">升级</button>
+          </div>
+          <button class="w-full text-left px-3 py-2 text-xs hover:bg-surface-container-highest transition-colors text-error" @click="doLogout()">退出登录</button>
+        </div>
+      </div>
     </div>
   </div>
 </nav>
 
+<!-- ===== LOGIN/REGISTER SCREEN ===== -->
+<div class="fixed inset-0 z-[200] bg-surface-dim flex items-center justify-center" x-show="authRequired && !authUser" x-cloak>
+  <div class="w-full max-w-sm mx-4 bg-surface-container rounded-2xl border border-outline-variant/20 shadow-2xl overflow-hidden">
+    <div class="p-8 text-center">
+      <h1 class="text-xl font-black tracking-tight mb-1">The Orchestrator</h1>
+      <p class="text-xs text-on-surface-variant mb-6">StreamVideo 多平台直播录制系统</p>
+
+      <!-- Tab 切换 -->
+      <div class="flex bg-surface-container-highest rounded-lg p-0.5 mb-6">
+        <button class="flex-1 py-2 text-xs font-bold rounded-md transition-all"
+          :class="authTab==='login'?'bg-primary text-on-primary':'text-on-surface-variant'"
+          @click="authTab='login'">登录</button>
+        <button class="flex-1 py-2 text-xs font-bold rounded-md transition-all"
+          :class="authTab==='register'?'bg-primary text-on-primary':'text-on-surface-variant'"
+          @click="authTab='register'">注册</button>
+      </div>
+
+      <!-- 登录表单 -->
+      <div x-show="authTab==='login'" class="space-y-3">
+        <input type="email" class="w-full bg-surface-container-high border-none text-sm rounded-lg px-4 py-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="邮箱" x-model="authEmail" @keydown.enter="doLogin()"/>
+        <input type="password" class="w-full bg-surface-container-high border-none text-sm rounded-lg px-4 py-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="密码" x-model="authPassword" @keydown.enter="doLogin()"/>
+        <button class="w-full py-3 bg-gradient-to-r from-primary-container to-primary text-on-primary-container text-sm font-bold rounded-lg active:scale-[0.98] transition-all" :disabled="authBusy" @click="doLogin()" x-text="authBusy?'登录中...':'登录'"></button>
+      </div>
+
+      <!-- 注册表单 -->
+      <div x-show="authTab==='register'" class="space-y-3">
+        <input type="text" class="w-full bg-surface-container-high border-none text-sm rounded-lg px-4 py-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="昵称" x-model="authDisplayName"/>
+        <input type="email" class="w-full bg-surface-container-high border-none text-sm rounded-lg px-4 py-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="邮箱" x-model="authEmail" @keydown.enter="doRegister()"/>
+        <input type="password" class="w-full bg-surface-container-high border-none text-sm rounded-lg px-4 py-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="密码（至少6位）" x-model="authPassword" @keydown.enter="doRegister()"/>
+        <button class="w-full py-3 bg-gradient-to-r from-primary-container to-primary text-on-primary-container text-sm font-bold rounded-lg active:scale-[0.98] transition-all" :disabled="authBusy" @click="doRegister()" x-text="authBusy?'注册中...':'注册'"></button>
+      </div>
+
+      <!-- 错误提示 -->
+      <div x-show="authError" class="mt-3 text-xs text-error" x-text="authError"></div>
+
+      <!-- 跳过登录（SV_TOKEN 模式） -->
+      <button class="mt-4 text-[10px] text-on-surface-variant/50 hover:text-on-surface-variant" @click="authRequired=false">跳过登录（本地模式）</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== SIDE NAV (Icon Only, 56px) ===== -->
-<aside class="hidden md:flex fixed left-0 top-14 h-[calc(100vh-3.5rem)] w-14 flex-col items-center py-3 bg-surface-container border-r border-outline-variant/15 z-40 gap-1" x-show="uiMode==='advanced'" role="navigation" aria-label="主导航">
+<aside class="hidden md:flex fixed left-0 top-14 h-[calc(100vh-3.5rem)] w-14 flex-col items-center py-3 bg-surface-container border-r border-outline-variant/15 z-40 gap-1" role="navigation" aria-label="主导航">
   <button class="relative group w-10 h-10 rounded-lg flex items-center justify-center transition-all" :class="currentPage==='streams'?'bg-primary-container text-on-primary-container':'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'" @click="currentPage='streams'" aria-label="Streams">
     <span class="material-symbols-outlined text-xl">sensors</span>
     <span class="absolute left-full ml-2 px-2 py-1 bg-surface-container-highest text-on-surface text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">Streams</span>
@@ -181,95 +232,9 @@ document.addEventListener('DOMContentLoaded',()=>{
 </div>
 
 <!-- ===== MAIN CONTENT ===== -->
-<main class="pt-14 min-h-screen" :class="uiMode==='advanced'?'md:pl-14':''">
+<main class="pt-14 min-h-screen md:pl-14">
 
-<!-- ===== FLASHCUT SIMPLE MODE ===== -->
-<div x-show="uiMode==='simple'" x-cloak class="p-4 lg:p-8 max-w-5xl mx-auto">
-  <!-- Hero -->
-  <div class="text-center mb-8">
-    <h1 class="text-2xl font-black mb-2">别让爆单的直播，变成硬盘里的废数据</h1>
-    <p class="text-sm text-on-surface-variant">录制结束，自动切出带字幕的短视频，直接发布</p>
-  </div>
-
-  <!-- 主播卡片网格 -->
-  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-    <template x-for="m in models" :key="m.username">
-      <div class="bg-surface-container rounded-2xl p-5 border border-outline-variant/10 relative overflow-hidden"
-           :class="m.state==='recording'?'recording-pulse':''">
-        <!-- 状态指示 -->
-        <div class="flex items-center justify-between mb-3">
-          <div class="flex items-center gap-2">
-            <div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden">
-              <img :src="m.thumbnail_url||''" class="w-full h-full object-cover" x-show="m.thumbnail_url" />
-              <span class="material-symbols-outlined text-on-surface-variant" x-show="!m.thumbnail_url">person</span>
-            </div>
-            <div>
-              <div class="font-bold text-sm" x-text="m.username"></div>
-              <div class="text-[10px] text-on-surface-variant" x-text="m.platform"></div>
-            </div>
-          </div>
-          <span class="w-2.5 h-2.5 rounded-full" :class="{'bg-[#00b894]':m.state==='recording','bg-tertiary':m.status==='public','bg-outline':m.status==='offline','bg-error':m.state==='error'}"></span>
-        </div>
-
-        <!-- 状态文字 -->
-        <div class="text-xs text-on-surface-variant mb-4" x-text="m.state==='recording'?'录制中 · '+fmtSize(m.current_recording?.file_size||0):m.status==='public'?'在线':m.state==='monitoring'?'监控中':'离线'"></div>
-
-        <!-- 两个核心按钮 -->
-        <div class="flex gap-2">
-          <button class="flex-1 h-10 rounded-xl text-sm font-bold transition-all"
-            :class="m.state==='recording'?'bg-error/20 text-error':'bg-primary text-on-primary'"
-            @click="m.state==='recording'?stopModel(m.username):startModel(m.username)"
-            x-text="m.state==='recording'?'停止录制':'开始录制'"></button>
-          <button class="flex-1 h-10 rounded-xl bg-surface-container-highest text-sm font-bold text-on-surface-variant hover:text-primary transition-all"
-            @click="triggerFlashCut(m.username)">生成高光</button>
-        </div>
-
-        <!-- 热度波形（如果有弹幕数据） -->
-        <div class="mt-3" x-show="m._waveformHtml" x-html="m._waveformHtml"></div>
-      </div>
-    </template>
-
-    <!-- 添加主播卡片 -->
-    <div class="bg-surface-container rounded-2xl p-5 border-2 border-dashed border-outline-variant/20 flex flex-col items-center justify-center min-h-[180px] cursor-pointer hover:border-primary/40 transition-colors"
-         @click="$refs.simpleAddInput.focus()">
-      <span class="material-symbols-outlined text-3xl text-on-surface-variant/40 mb-2">add</span>
-      <input class="w-full bg-transparent text-center text-sm placeholder:text-on-surface-variant/40 outline-none" placeholder="粘贴直播间链接" x-ref="simpleAddInput" x-model="newModel" @keydown.enter="addModel()"/>
-    </div>
-  </div>
-
-  <!-- 最近生成的片段 -->
-  <div x-show="recentClips.length > 0">
-    <div class="flex items-center justify-between mb-3">
-      <h2 class="text-sm font-bold">最近生成的短视频</h2>
-      <button class="text-xs text-primary font-medium" @click="uiMode='advanced'; currentPage='clips'; fetchClips()">查看全部</button>
-    </div>
-    <div class="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
-      <template x-for="c in recentClips.slice(0, 10)" :key="c.clip_id">
-        <div class="flex-none w-36 bg-surface-container rounded-xl overflow-hidden border border-outline-variant/10">
-          <div class="aspect-[9/16] max-h-48 bg-black flex items-center justify-center cursor-pointer relative" @click="playingVideo='/api/clips/file/'+c.username+'/'+c.output_file.split('/').pop()">
-            <span class="material-symbols-outlined text-white/40 text-2xl">play_arrow</span>
-            <span class="absolute bottom-1 right-1 text-[9px] bg-black/60 text-white px-1 py-0.5 rounded" x-text="Math.round(c.duration)+'s'"></span>
-          </div>
-          <div class="p-2">
-            <div class="text-[10px] font-bold truncate" x-text="c.username"></div>
-            <div class="text-[9px] text-on-surface-variant" x-text="fmtSize(c.size)"></div>
-          </div>
-        </div>
-      </template>
-    </div>
-  </div>
-
-  <!-- 配额提示 -->
-  <div class="mt-6 text-center text-xs text-on-surface-variant/60">
-    <span>FlashCut 闪切</span> · <span x-text="'今日已生成 '+(quotaInfo.used_today||0)+'/'+( quotaInfo.daily_limit||3)+' 条'"></span>
-    <template x-if="quotaInfo.tier==='free'">
-      <span> · <button class="text-primary font-bold" @click="showToast('升级功能开发中')">升级 Pro</button></span>
-    </template>
-  </div>
-</div>
-
-<!-- ===== ADVANCED MODE ===== -->
-<div x-show="uiMode==='advanced'" class="p-4 lg:p-6">
+<div class="p-4 lg:p-6">
 
 <!-- ========== PAGE: STREAMS ========== -->
 <div x-show="currentPage==='streams'">
@@ -293,7 +258,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   <div class="text-center py-24 text-on-surface-variant">
     <span class="material-symbols-outlined text-6xl opacity-20 mb-4">sensors</span>
     <p class="text-lg font-medium mb-2">暂无监控主播</p>
-    <p class="text-sm opacity-60">支持平台：抖音 · B站 · Twitch · YouTube · Stripchat<br/>粘贴直播 URL 即可开始录制</p>
+    <p class="text-sm opacity-60">支持平台：抖音 · B站 · Twitch · YouTube<br/>粘贴直播 URL 即可开始录制</p>
   </div>
 </template>
 
@@ -350,12 +315,17 @@ document.addEventListener('DOMContentLoaded',()=>{
               :title="m.auto_merge!==false ? '自动合并: 开' : '自动合并: 关'">
               <span class="material-symbols-outlined text-base" :class="m.auto_merge!==false?'text-primary':'text-on-surface-variant'">bolt</span>
             </span>
+            <span class="cursor-pointer opacity-50 hover:opacity-100 transition-opacity"
+              @click.stop="openModelSettings(m.username)"
+              title="主播设置">
+              <span class="material-symbols-outlined text-base text-on-surface-variant">settings</span>
+            </span>
           </div>
         </div>
         <!-- Row 2: Platform + Viewers + Stats -->
         <div class="flex items-center gap-2 text-[11px] text-on-surface-variant mb-1.5">
-          <span class="font-medium" :style="({douyin:'color:#fe2c55',bilibili:'color:#00aeec',twitch:'color:#9146ff',youtube:'color:#ff0000',stripchat:'color:#6c5ce7'})[m.platform]||''"
-            x-text="({douyin:'抖音',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',stripchat:'Stripchat'})[m.platform]||m.platform"></span>
+          <span class="font-medium" :style="({douyin:'color:#fe2c55',bilibili:'color:#00aeec',twitch:'color:#9146ff',youtube:'color:#ff0000'})[m.platform]||''"
+            x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube'})[m.platform]||m.platform"></span>
           <template x-if="m.quality && m.quality !== 'best'">
             <span class="text-primary font-bold" x-text="m.quality"></span>
           </template>
@@ -373,6 +343,15 @@ document.addEventListener('DOMContentLoaded',()=>{
           </template>
           <template x-if="!m.current_recording && m.last_check > 0">
             <span x-text="ago(m.last_check)"></span>
+          </template>
+          <template x-if="m.merge_status === 'merging'">
+            <span class="text-tertiary font-bold" x-text="'⏳ 合并中 ' + (m.merge_progress ? Math.round(m.merge_progress*100)+'%' : '')"></span>
+          </template>
+          <template x-if="m.merge_status === 'merged'">
+            <span class="text-[#00b894] font-bold">✅ 已合并</span>
+          </template>
+          <template x-if="m.merge_status === 'failed'">
+            <button class="text-error font-bold hover:underline" @click.stop="retryMerge(m.username)">⚠️ 合并失败 · 重试</button>
           </template>
         </div>
         <!-- Row 3: Error -->
@@ -408,10 +387,10 @@ document.addEventListener('DOMContentLoaded',()=>{
 </div>
 
 <!-- ========== PAGE: STORAGE ========== -->
-<div x-show="currentPage==='storage'" x-cloak x-init="$watch('currentPage', v => { if(v==='storage') { fetchStorageBreakdown(); fetchDailyStats(); } })">
+<div x-show="currentPage==='storage'" x-cloak x-init="$watch('currentPage', v => { if(v==='storage') { fetchStorageBreakdown(); fetchDailyStats(); fetchMergeSavings(); } })">
 <!-- Storage Overview -->
 <h2 class="text-2xl font-black tracking-tight mb-6">Storage</h2>
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+<div class="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-6">
   <div class="bg-surface-container p-5 rounded-xl border border-outline-variant/10">
     <p class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1">磁盘总容量</p>
     <p class="text-2xl font-black" x-text="fmtSize(diskInfo.total_bytes)"></p>
@@ -423,6 +402,11 @@ document.addEventListener('DOMContentLoaded',()=>{
   <div class="bg-surface-container p-5 rounded-xl border border-outline-variant/10">
     <p class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1">剩余空间</p>
     <p class="text-2xl font-black" :class="diskInfo.free_bytes < 1024*1024*1024 ? 'text-error' : 'text-[#00b894]'" x-text="fmtSize(diskInfo.free_bytes)"></p>
+  </div>
+  <div class="bg-surface-container p-5 rounded-xl border border-outline-variant/10">
+    <p class="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1">合并节省</p>
+    <p class="text-2xl font-black text-[#00b894]" x-text="fmtSize(mergeSavings.total_savings)"></p>
+    <p class="text-[10px] text-on-surface-variant mt-1" x-text="mergeSavings.merge_count + ' 次 · ' + mergeSavings.avg_compression + '%'"></p>
   </div>
 </div>
 <div class="bg-surface-container p-5 rounded-xl border border-outline-variant/10 mb-6">
@@ -548,7 +532,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       <span class="w-2.5 h-2.5 rounded-full" :class="networkInfo.proxy_ok?'bg-[#00b894]':'bg-error'"></span>
       <span class="text-sm font-medium" x-text="networkInfo.proxy || 'http://127.0.0.1:7890'"></span>
     </div>
-    <p class="text-xs text-on-surface-variant">用于 Stripchat 等需要代理的平台</p>
+    <p class="text-xs text-on-surface-variant">用于需要代理的平台</p>
   </div>
 </div>
 <div class="bg-surface-container rounded-xl border border-outline-variant/10 mb-8">
@@ -575,10 +559,10 @@ document.addEventListener('DOMContentLoaded',()=>{
     <h3 class="text-sm font-bold">平台连接状态</h3>
   </div>
   <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 p-6">
-    <template x-for="p in ['douyin','bilibili','twitch','youtube','stripchat']" :key="p">
+    <template x-for="p in ['douyin','bilibili','twitch','youtube']" :key="p">
       <div class="bg-surface-container-low p-3 rounded-lg flex items-center gap-3">
         <span class="w-2.5 h-2.5 rounded-full" :class="models.some(m=>m.platform===p)?'bg-[#00b894]':'bg-outline-variant'"></span>
-        <span class="text-sm font-medium capitalize" x-text="({douyin:'抖音',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',stripchat:'Stripchat'})[p]"></span>
+        <span class="text-sm font-medium capitalize" x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube'})[p]"></span>
       </div>
     </template>
   </div>
@@ -620,6 +604,92 @@ document.addEventListener('DOMContentLoaded',()=>{
         <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="systemInfo.playwright_available?'bg-[#00b894]/20 text-[#00b894]':'bg-error-container/30 text-error'" x-text="systemInfo.playwright_available?'可用':'不可用'"></span>
       </div>
       <div class="flex justify-between"><span class="text-on-surface-variant">监控主播数</span><span class="font-bold" x-text="models.length"></span></div>
+    </div>
+  </div>
+</div>
+<!-- Log Viewer -->
+<div class="bg-surface-container rounded-xl border border-outline-variant/10 mb-6">
+  <div class="px-6 py-4 border-b border-outline-variant/10">
+    <h3 class="text-sm font-bold flex items-center gap-2"><span class="material-symbols-outlined text-primary text-lg">share</span>平台授权</h3>
+    <p class="text-xs text-on-surface-variant mt-1">授权后可将切片直接分发到对应平台（需要开发者账号）</p>
+  </div>
+  <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <!-- 抖音授权 -->
+    <div class="bg-surface-container-low rounded-lg p-4 border border-outline-variant/10">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold" style="color:#fe2c55">抖音</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">OAuth 授权</span>
+        </div>
+        <span class="text-[10px] px-2 py-0.5 rounded font-bold"
+          :class="oauthStatus.douyin?.authorized ? 'bg-[#00b894]/20 text-[#00b894]' : 'bg-surface-container-highest text-on-surface-variant'"
+          x-text="oauthStatus.douyin?.authorized ? '已授权' : (oauthStatus.douyin?.setup_required ? '需配置' : '未授权')"></span>
+      </div>
+      <p class="text-[10px] text-on-surface-variant mb-3" x-show="oauthStatus.douyin?.setup_required">
+        需先配置 DOUYIN_CLIENT_KEY 和 DOUYIN_CLIENT_SECRET 环境变量
+      </p>
+      <p class="text-[10px] text-on-surface-variant mb-3" x-show="oauthStatus.douyin?.authorized">
+        <span x-text="oauthStatus.douyin?.openid ? 'OpenID: ' + oauthStatus.douyin.openid.substring(0,12) + '...' : ''"></span>
+      </p>
+      <div class="flex gap-2">
+        <button x-show="!oauthStatus.douyin?.authorized" class="flex-1 px-3 py-1.5 text-xs font-bold rounded-md bg-[#fe2c55]/10 text-[#fe2c55] hover:bg-[#fe2c55]/20 transition-all"
+          :disabled="oauthStatus.douyin?.setup_required"
+          @click="doOAuthAuthorize('douyin')">授权抖音</button>
+        <button x-show="oauthStatus.douyin?.authorized" class="px-3 py-1.5 text-xs font-bold rounded-md bg-error/10 text-error hover:bg-error/20 transition-all"
+          @click="doOAuthRevoke('douyin')">撤销授权</button>
+      </div>
+    </div>
+    <!-- 快手授权 -->
+    <div class="bg-surface-container-low rounded-lg p-4 border border-outline-variant/10">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold" style="color:#ff6600">快手</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">OAuth 授权</span>
+        </div>
+        <span class="text-[10px] px-2 py-0.5 rounded font-bold"
+          :class="oauthStatus.kuaishou?.authorized ? 'bg-[#00b894]/20 text-[#00b894]' : 'bg-surface-container-highest text-on-surface-variant'"
+          x-text="oauthStatus.kuaishou?.authorized ? '已授权' : (oauthStatus.kuaishou?.setup_required ? '需配置' : '未授权')"></span>
+      </div>
+      <p class="text-[10px] text-on-surface-variant mb-3" x-show="oauthStatus.kuaishou?.setup_required">
+        需先配置 KUAISHOU_CLIENT_KEY 和 KUAISHOU_CLIENT_SECRET 环境变量
+      </p>
+      <div class="flex gap-2">
+        <button x-show="!oauthStatus.kuaishou?.authorized" class="flex-1 px-3 py-1.5 text-xs font-bold rounded-md bg-[#ff6600]/10 text-[#ff6600] hover:bg-[#ff6600]/20 transition-all"
+          :disabled="oauthStatus.kuaishou?.setup_required"
+          @click="doOAuthAuthorize('kuaishou')">授权快手</button>
+        <button x-show="oauthStatus.kuaishou?.authorized" class="px-3 py-1.5 text-xs font-bold rounded-md bg-error/10 text-error hover:bg-error/20 transition-all"
+          @click="doOAuthRevoke('kuaishou')">撤销授权</button>
+      </div>
+    </div>
+    <!-- B站辅助 -->
+    <div class="bg-surface-container-low rounded-lg p-4 border border-outline-variant/10">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold" style="color:#00aeec">B站</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">辅助投稿</span>
+        </div>
+        <span class="text-[10px] px-2 py-0.5 rounded font-bold bg-[#00b894]/20 text-[#00b894]">开箱即用</span>
+      </div>
+      <p class="text-[10px] text-on-surface-variant mb-3">复制信息后跳转 B站投稿页，手动上传视频</p>
+      <a href="https://member.bilibili.com/platform/upload/video/frame" target="_blank"
+        class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-md bg-[#00aeec]/10 text-[#00aeec] hover:bg-[#00aeec]/20 transition-all">
+        <span class="material-symbols-outlined text-sm">open_in_new</span>打开投稿页
+      </a>
+    </div>
+    <!-- 微信视频号辅助 -->
+    <div class="bg-surface-container-low rounded-lg p-4 border border-outline-variant/10">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold" style="color:#07c160">微信视频号</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">辅助投稿</span>
+        </div>
+        <span class="text-[10px] px-2 py-0.5 rounded font-bold bg-[#00b894]/20 text-[#00b894]">开箱即用</span>
+      </div>
+      <p class="text-[10px] text-on-surface-variant mb-3">复制信息后跳转视频号创作中心，手动上传视频</p>
+      <a href="https://channels.weixin.qq.com/platform/post/create" target="_blank"
+        class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-md bg-[#07c160]/10 text-[#07c160] hover:bg-[#07c160]/20 transition-all">
+        <span class="material-symbols-outlined text-sm">open_in_new</span>打开创作中心
+      </a>
     </div>
   </div>
 </div>
@@ -732,6 +802,7 @@ document.addEventListener('DOMContentLoaded',()=>{
           <div class="text-[10px] text-on-surface-variant mb-2" x-text="c.resolution+' · '+c.format"></div>
           <div class="flex gap-1">
             <a class="flex-1 text-center text-xs py-1.5 rounded-lg bg-primary text-on-primary font-bold" :href="'/api/clips/file/'+c.username+'/'+c.output_file.split('/').pop()+'?download=1'" download>下载</a>
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-surface-container-highest text-on-surface-variant hover:text-primary font-bold" @click="openDistribute(c)">分发</button>
             <button class="text-xs px-3 py-1.5 rounded-lg bg-surface-container-highest text-on-surface-variant hover:text-error font-bold" @click="deleteClip(c.clip_id)">删除</button>
           </div>
         </div>
@@ -739,7 +810,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     </template>
   </div>
 </div>
-</div><!-- /advanced mode -->
+</div>
 
 </main>
 
@@ -1056,7 +1127,7 @@ document.addEventListener('DOMContentLoaded',()=>{
           <div class="flex items-center justify-between mb-2">
             <span class="text-sm font-bold" x-text="(modalHighlights||[]).length+' 个高光'"></span>
             <div class="flex gap-2">
-              <select class="bg-surface-container-high border-none text-xs rounded px-2 py-1" x-model="modalDetectFile">
+              <select class="bg-surface-container-high border-none text-xs rounded px-2 py-1" x-model="modalDetectFile" @change="loadClipPreview()">
                 <option value="">最新合并文件</option>
                 <template x-for="f in modalFiles" :key="f.filename"><option :value="f.filename" x-text="f.filename"></option></template>
               </select>
@@ -1087,15 +1158,48 @@ document.addEventListener('DOMContentLoaded',()=>{
           <!-- 手动创建片段 -->
           <div class="border-t border-outline-variant/10 pt-3 mt-3">
             <h4 class="text-xs font-bold text-on-surface-variant mb-2">手动创建片段</h4>
-            <div class="flex gap-2 items-end">
-              <div class="space-y-1 flex-1">
+            <!-- 预览播放器 -->
+            <div class="mb-3" x-show="clipPreviewUrl">
+              <video class="w-full rounded-lg bg-black max-h-48" controls x-ref="clipPreviewPlayer" :src="clipPreviewUrl"
+                @loadedmetadata="clipVideoDuration = $refs.clipPreviewPlayer.duration; if(!manualClipEnd || manualClipEnd > clipVideoDuration) manualClipEnd = Math.min(60, clipVideoDuration)"
+                @timeupdate="if($refs.clipPreviewPlayer.currentTime >= manualClipEnd) { $refs.clipPreviewPlayer.pause(); $refs.clipPreviewPlayer.currentTime = manualClipStart; }"></video>
+            </div>
+            <!-- 时间范围滑块 -->
+            <div class="mb-3 space-y-2" x-show="clipVideoDuration > 0">
+              <div class="flex items-center gap-2 text-[10px] text-on-surface-variant">
+                <span x-text="fmtTimestamp(manualClipStart)"></span>
+                <div class="flex-1 relative h-6 flex items-center">
+                  <div class="absolute inset-x-0 h-1.5 bg-surface-container-highest rounded-full"></div>
+                  <div class="absolute h-1.5 bg-primary/60 rounded-full" :style="`left:${(manualClipStart/clipVideoDuration)*100}%;right:${100-(manualClipEnd/clipVideoDuration)*100}%`"></div>
+                  <input type="range" min="0" :max="Math.floor(clipVideoDuration)" step="1" x-model.number="manualClipStart"
+                    @input="if(manualClipStart >= manualClipEnd) manualClipStart = manualClipEnd - 1"
+                    class="absolute inset-x-0 appearance-none bg-transparent pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:cursor-pointer" style="z-index:2"/>
+                  <input type="range" min="0" :max="Math.floor(clipVideoDuration)" step="1" x-model.number="manualClipEnd"
+                    @input="if(manualClipEnd <= manualClipStart) manualClipEnd = manualClipStart + 1"
+                    class="absolute inset-x-0 appearance-none bg-transparent pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-error [&::-webkit-slider-thumb]:cursor-pointer" style="z-index:3"/>
+                </div>
+                <span x-text="fmtTimestamp(manualClipEnd)"></span>
+              </div>
+              <div class="text-center text-[10px] text-on-surface-variant">
+                时长: <span class="font-bold text-on-surface" x-text="Math.round(manualClipEnd - manualClipStart) + 's'"></span>
+              </div>
+            </div>
+            <!-- 精确输入 + 水印 + 操作 -->
+            <div class="flex gap-2 items-end flex-wrap">
+              <div class="space-y-1 w-20">
                 <label class="text-[10px] text-on-surface-variant">开始(秒)</label>
                 <input type="number" min="0" step="1" class="w-full bg-surface-container-high border-none text-sm rounded h-8 px-2" x-model.number="manualClipStart"/>
               </div>
-              <div class="space-y-1 flex-1">
+              <div class="space-y-1 w-20">
                 <label class="text-[10px] text-on-surface-variant">结束(秒)</label>
                 <input type="number" min="0" step="1" class="w-full bg-surface-container-high border-none text-sm rounded h-8 px-2" x-model.number="manualClipEnd"/>
               </div>
+              <div class="space-y-1 flex-1 min-w-[100px]">
+                <label class="text-[10px] text-on-surface-variant">水印文字</label>
+                <input type="text" class="w-full bg-surface-container-high border-none text-sm rounded h-8 px-2 placeholder:text-on-surface-variant/40" placeholder="可选" x-model="clipWatermark"/>
+              </div>
+              <button class="h-8 px-3 rounded bg-surface-container-highest text-on-surface-variant text-xs font-bold whitespace-nowrap hover:text-primary transition-colors"
+                @click="previewClipRange()" x-show="clipPreviewUrl">预览</button>
               <button class="h-8 px-3 rounded bg-primary text-on-primary text-xs font-bold whitespace-nowrap" @click="createManualClip()">生成片段</button>
             </div>
           </div>
@@ -1172,7 +1276,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         <div class="space-y-2">
           <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">会话复用</label>
           <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.session_reuse_seconds||30" @change="updateSetting('session_reuse_seconds',parseInt($event.target.value))">
-            <option value="10">10 秒</option><option value="30">30 秒</option><option value="60">60 秒</option><option value="120">120 秒</option>
+            <option value="10">10 秒</option><option value="30">30 秒</option><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">120 秒</option><option value="180">180 秒</option><option value="300">300 秒</option>
           </select>
         </div>
         <div class="space-y-2">
@@ -1287,12 +1391,8 @@ document.addEventListener('DOMContentLoaded',()=>{
           <div class="bg-surface-container-low rounded-lg p-3 space-y-2 border border-outline-variant/10">
             <div class="flex items-center gap-2">
               <select class="flex-none bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary w-24" x-model="wh.type">
-                <option value="generic">Generic</option>
                 <option value="discord">Discord</option>
                 <option value="telegram">Telegram</option>
-                <option value="bark">Bark</option>
-                <option value="pushdeer">PushDeer</option>
-                <option value="serverchan">Server酱</option>
               </select>
               <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Webhook URL" x-model="wh.url"/>
               <button class="text-on-surface-variant hover:text-error text-xs p-1" @click="settings.webhooks.splice(wi,1); updateSetting('webhooks', settings.webhooks)">
@@ -1303,11 +1403,6 @@ document.addEventListener('DOMContentLoaded',()=>{
               <div class="flex gap-2">
                 <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Bot Token" x-model="wh.bot_token"/>
                 <input class="w-28 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Chat ID" x-model="wh.chat_id"/>
-              </div>
-            </template>
-            <template x-if="['bark','pushdeer','serverchan'].includes(wh.type)">
-              <div class="flex gap-2">
-                <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" :placeholder="wh.type==='bark'?'Bark Key':wh.type==='pushdeer'?'PushDeer Key':'SendKey'" x-model="wh.key"/>
               </div>
             </template>
             <div class="flex items-center gap-2">
@@ -1414,6 +1509,75 @@ document.addEventListener('DOMContentLoaded',()=>{
   </div>
 </div>
 
+<!-- ===== DISTRIBUTE MODAL ===== -->
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-surface-dim/60 backdrop-blur-xl" x-show="showDistribute" x-cloak @click.self="showDistribute=false">
+  <div class="w-full max-w-md mx-4 bg-surface-container border border-outline-variant/30 rounded-xl shadow-2xl overflow-hidden">
+    <div class="px-6 py-4 border-b border-outline-variant/15 flex items-center justify-between">
+      <h2 class="text-sm font-bold">分发到平台</h2>
+      <button class="text-on-surface-variant hover:text-on-surface p-1" @click="showDistribute=false"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="p-6 space-y-4">
+      <!-- 片段信息 -->
+      <div class="flex items-center gap-3 bg-surface-container-low rounded-lg p-3">
+        <span class="material-symbols-outlined text-primary">movie</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs font-bold truncate" x-text="distClip?.username||''"></div>
+          <div class="text-[10px] text-on-surface-variant" x-text="(distClip?.duration?Math.round(distClip.duration)+'s':'') + ' · ' + fmtSize(distClip?.size||0)"></div>
+        </div>
+      </div>
+      <!-- 平台选择 -->
+      <div>
+        <label class="text-xs font-bold text-on-surface-variant mb-1 block">目标平台</label>
+        <div class="flex flex-wrap gap-2">
+          <template x-for="p in distPlatforms" :key="p">
+            <button class="px-3 py-2 rounded-lg text-xs font-bold transition-all border"
+              :class="distPlatform===p ? 'bg-primary/20 text-primary border-primary/40' : 'bg-surface-container-highest text-on-surface-variant border-transparent hover:text-primary'"
+              @click="distPlatform=p" x-text="({mock:'测试',douyin:'抖音',kuaishou:'快手',bilibili:'B站',weixinvideo:'视频号'})[p]||p"></button>
+          </template>
+        </div>
+        <!-- 辅助模式提示 -->
+        <p x-show="distPlatform==='bilibili'||distPlatform==='weixinvideo'" class="text-[10px] text-on-surface-variant/70 mt-1">
+          辅助投稿：复制信息后跳转平台，手动上传视频文件
+        </p>
+      </div>
+      <!-- 标题 -->
+      <div>
+        <label class="text-xs font-bold text-on-surface-variant mb-1 block">标题</label>
+        <input type="text" class="w-full bg-surface-container-high border-none text-sm rounded-lg px-3 py-2 focus:ring-1 focus:ring-primary" x-model="distTitle" placeholder="视频标题"/>
+      </div>
+      <!-- 描述 -->
+      <div>
+        <label class="text-xs font-bold text-on-surface-variant mb-1 block">描述</label>
+        <textarea class="w-full bg-surface-container-high border-none text-sm rounded-lg px-3 py-2 focus:ring-1 focus:ring-primary resize-none h-16" x-model="distDescription" placeholder="可选"></textarea>
+      </div>
+      <!-- 标签 -->
+      <div>
+        <label class="text-xs font-bold text-on-surface-variant mb-1 block">标签（逗号分隔）</label>
+        <input type="text" class="w-full bg-surface-container-high border-none text-sm rounded-lg px-3 py-2 focus:ring-1 focus:ring-primary" x-model="distTags" placeholder="直播,精彩片段"/>
+      </div>
+      <!-- 状态 -->
+      <div x-show="distStatus" class="text-xs p-2 rounded-lg" :class="distStatus==='published'?'bg-[#00b894]/10 text-[#00b894]':distStatus==='failed'?'bg-error/10 text-error':'bg-primary/10 text-primary'">
+        <span x-text="({pending:'等待中',uploading:'上传中...',processing:'平台处理中...',published:'已发布',failed:'发布失败'})[distStatus]||distStatus"></span>
+        <span x-show="distError" class="ml-1" x-text="distError"></span>
+        <a x-show="distRemoteUrl" :href="distRemoteUrl" target="_blank" class="ml-2 underline">查看</a>
+      </div>
+    </div>
+    <div class="px-6 py-4 border-t border-outline-variant/15 flex justify-end gap-2">
+      <button class="px-4 py-2 text-sm font-semibold text-on-surface hover:bg-surface-container-highest rounded-md" @click="showDistribute=false">取消</button>
+      <!-- 辅助投稿按钮（B站/视频号） -->
+      <button x-show="distPlatform==='bilibili'||distPlatform==='weixinvideo'"
+        class="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-primary-container to-primary rounded-md active:scale-95 transition-all"
+        :disabled="distBusy || !distPlatform" @click="submitDistributeAssist()"
+        x-text="distBusy?'处理中...':'复制信息并打开投稿页'"></button>
+      <!-- 普通发布按钮 -->
+      <button x-show="distPlatform!=='bilibili'&&distPlatform!=='weixinvideo'"
+        class="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-primary-container to-primary rounded-md active:scale-95 transition-all"
+        :disabled="distBusy || !distPlatform" @click="submitDistribute()"
+        x-text="distBusy?'发布中...':'发布'"></button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== MOBILE NAV ===== -->
 <nav class="md:hidden fixed bottom-0 left-0 w-full bg-surface h-16 flex items-center justify-around z-50 border-t border-outline-variant/15 px-4">
   <div class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='streams'?'text-primary':'text-on-surface-variant'" @click="currentPage='streams'">
@@ -1452,22 +1616,30 @@ function app() {
     showModal: false, modalTitle: '', modalFiles: [], modalUsername: '', modalTab: 'files', modalSessions: [],
     healthResults: [], healthLoading: false,
     modalHighlights: [], modalDetecting: false, modalDetectFile: '',
-    manualClipStart: 0, manualClipEnd: 60,
+    manualClipStart: 0, manualClipEnd: 60, clipPreviewUrl: '', clipVideoDuration: 0, clipWatermark: '',
     playingVideo: null, toast: '', toastTimer: null, ticker: null,
     mergeGroups: [], mergeGap: 15, activeMerges: {}, deleteAfterMerge: false, excludedFiles: [],
     settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true },
     showSettings: false, diskInfo: { recordings_bytes: 0, free_bytes: 0, total_bytes: 0 }, _lastEventTs: 0,
+    // 用户认证
+    authRequired: false, authUser: null, authTab: 'login', authEmail: '', authPassword: '', authDisplayName: '', authError: '', authBusy: false, showUserMenu: false,
     addingModel: false, dragOver: false, fileSort: 'time', fileSearch: '', batchMode: false, selectedFiles: [],
     logEntries: [], modalStats: null,
     currentPage: 'streams', networkInfo: {}, systemInfo: {},
     // V2.0: 高光 + 片段
     highlightsList: [], highlightFilterUser: '', clipsList: [], clipFilterUser: '',
-    // FlashCut V3
-    uiMode: localStorage.getItem('flashcut_mode') || 'simple',
-    recentClips: [], quotaInfo: { tier: 'free', used_today: 0, daily_limit: 3 },
     showSchedule: false, scheduleUsername: '', scheduleQuality: 'best', scheduleCookies: '', scheduleStreamUrl: '', scheduleData: { enabled: false, start: '20:00', end: '02:00', days: [0,1,2,3,4,5,6] },
     storageBreakdown: [],
+    // 分发
+    showDistribute: false, distClip: null, distPlatforms: [], distPlatform: '',
+    distTitle: '', distDescription: '', distTags: '',
+    distStatus: '', distError: '', distRemoteUrl: '', distBusy: false,
+    // OAuth 状态
+    oauthStatus: { douyin: null, kuaishou: null },
     mergeHistory: [], showMergeHistory: false, dailyStats: [], modalLoading: false,
+    // P1+P4: 新增状态
+    mergeSavings: { total_savings: 0, merge_count: 0, avg_compression: 0 },
+    modelSettingsModal: false, modelSettingsUsername: '', modelSettings: {},
 
     get sortedModels() {
       const order = { recording: 0, reconnecting: 1, monitoring: 2, error: 3, idle: 4 };
@@ -1486,9 +1658,8 @@ function app() {
     init() {
       // 从 URL 提取 token（用于认证模式）
       this._token = new URLSearchParams(location.search).get('token') || '';
+      this.checkAuth();
       this.connectWS(); this.fetchModels(); this.fetchSettings(); this.fetchDisk();
-      // FlashCut: 极简模式初始化
-      if (this.uiMode === 'simple') setTimeout(() => this.loadSimpleMode(), 2000);
       this.ticker = setInterval(() => {
         if (this.models.some(m => m.state === 'recording' || m.state === 'reconnecting'))
           this.models = [...this.models];
@@ -1498,7 +1669,6 @@ function app() {
       setInterval(() => { this.thumbTs = Date.now(); }, 15000);
       setInterval(() => { this.fetchDisk(); }, 60000);
       if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
-      if ('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js').catch(()=>{});
     },
 
     _apiFetch(url, opts) {
@@ -1514,9 +1684,86 @@ function app() {
     async fetchDisk() { try { const r = await this._apiFetch('/api/disk'); if (r.ok) this.diskInfo = await r.json(); } catch(e) {} },
     async fetchModels() { try { const r = await this._apiFetch('/api/models'); if (r.ok) { const d = await r.json(); if (!this.models.length) this.models = d; } } catch(e) {} },
     async fetchNetwork() { try { const r = await this._apiFetch('/api/network'); if (r.ok) this.networkInfo = await r.json(); } catch(e) { this.networkInfo = {}; } },
-    async fetchSystem() { try { const r = await this._apiFetch('/api/system'); if (r.ok) this.systemInfo = await r.json(); } catch(e) { this.systemInfo = {}; } },
+    async fetchSystem() {
+      try { const r = await this._apiFetch('/api/system'); if (r.ok) this.systemInfo = await r.json(); } catch(e) { this.systemInfo = {}; }
+      // 同时加载 OAuth 状态
+      for (const platform of ['douyin', 'kuaishou']) {
+        try {
+          const r = await this._apiFetch(`/api/oauth/${platform}/status`);
+          if (r.ok) { const d = await r.json(); this.oauthStatus[platform] = d; }
+        } catch(e) { this.oauthStatus[platform] = null; }
+      }
+    },
+    async doOAuthAuthorize(platform) {
+      try {
+        const r = await this._apiFetch(`/api/oauth/${platform}/authorize`);
+        if (r.ok) {
+          const d = await r.json();
+          if (d.error) { this.showToast(d.error); return; }
+          window.open(d.url, '_blank', 'width=600,height=700');
+          this.showToast(`已打开 ${platform} 授权页，授权完成后请刷新状态`);
+          // 延迟刷新状态
+          setTimeout(() => this.fetchSystem(), 5000);
+        }
+      } catch(e) { this.showToast('获取授权链接失败'); }
+    },
+    async doOAuthRevoke(platform) {
+      if (!confirm(`确认撤销 ${platform} 授权？`)) return;
+      try {
+        const r = await this._apiFetch(`/api/oauth/${platform}/revoke`, { method: 'DELETE' });
+        if (r.ok) { this.showToast('已撤销授权'); await this.fetchSystem(); }
+      } catch(e) { this.showToast('撤销失败'); }
+    },
     async fetchStorageBreakdown() { try { const r = await this._apiFetch('/api/storage/breakdown'); if (r.ok) this.storageBreakdown = await r.json(); } catch(e) { this.storageBreakdown = []; } },
     async fetchDailyStats() { try { const r = await this._apiFetch('/api/stats/daily?days=30'); if (r.ok) { const d = await r.json(); this.dailyStats = Array.isArray(d) ? d : []; } } catch(e) { this.dailyStats = []; } },
+    // P3: 合并节省统计
+    async fetchMergeSavings() {
+      try {
+        const r = await this._apiFetch('/api/stats/merge-savings');
+        if (r.ok) {
+          const d = await r.json();
+          this.mergeSavings = {
+            total_savings: d.total_savings || 0,
+            merge_count: d.merge_count || 0,
+            avg_compression: d.avg_compression || 0,
+          };
+        }
+      } catch(e) { this.mergeSavings = { total_savings: 0, merge_count: 0, avg_compression: 0 }; }
+    },
+    // P4: 任务级别配置
+    async openModelSettings(username) {
+      this.modelSettingsUsername = username;
+      try {
+        const r = await this._apiFetch(`/api/models/${username}/settings`);
+        if (r.ok) this.modelSettings = await r.json();
+        else this.modelSettings = {};
+      } catch(e) { this.modelSettings = {}; }
+      this.modelSettingsModal = true;
+    },
+    async saveModelSettings() {
+      try {
+        const r = await this._apiFetch(`/api/models/${this.modelSettingsUsername}/settings`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.modelSettings),
+        });
+        if (r.ok) {
+          this.showToast('设置已保存');
+          this.modelSettingsModal = false;
+          await this.fetchModels();
+        } else {
+          const err = await r.json().catch(() => ({}));
+          this.showToast('保存失败: ' + (err.error || '未知错误'));
+        }
+      } catch(e) { this.showToast('保存失败: 网络错误'); }
+    },
+    // P1: 重试合并
+    async retryMerge(username) {
+      try {
+        const r = await this._apiFetch('/api/sessions/retry-failed', { method: 'POST' });
+        if (r.ok) this.showToast('已触发重试');
+      } catch(e) { this.showToast('重试失败'); }
+    },
 
     async updateSetting(key, value) {
       this.settings[key] = value;
@@ -1563,10 +1810,52 @@ function app() {
           if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
         }
         else if (msg.type === 'merge_error') { this.activeMerges[msg.data.merge_id] = { status: 'error' }; this.showToast('合并失败: '+(msg.data.error||'未知错误')); if (this.showModal && this.modalTab==='sessions') this.loadSessions(); }
-        else if (msg.type === 'merge_progress') { const d = msg.data; this.activeMerges[d.merge_id] = { ...this.activeMerges[d.merge_id], status: 'running', progress: d.progress, message: d.message || '' }; }
+        else if (msg.type === 'merge_progress') {
+          const d = msg.data;
+          this.activeMerges[d.merge_id] = { ...this.activeMerges[d.merge_id], status: 'running', progress: d.progress, message: d.message || '' };
+          // P1: 更新主播卡片的合并状态
+          const m = this.models.find(x => x.username === d.username);
+          if (m) { m.merge_status = 'merging'; m.merge_progress = d.progress; }
+        }
         else if (msg.type === 'auto_merge_done') {
           if (msg.data.filename) { this.showToast(`${msg.data.username} 已自动合并 → ${msg.data.filename}`); this.desktopNotify(`${msg.data.username} 自动合并完成`, msg.data.filename); }
           if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
+          // P1: 更新主播卡片状态
+          const m = this.models.find(x => x.username === msg.data.username);
+          if (m) m.merge_status = 'merged';
+        }
+        else if (msg.type === 'merge_done') {
+          this.activeMerges[msg.data.merge_id] = { status: 'done', progress: 1 };
+          const detail = msg.data.input_count ? `${msg.data.input_count} 个片段 (${this.fmtSize(msg.data.input_size)})` : '';
+          const savings = msg.data.savings_pct > 0 ? ` · 节省 ${this.fmtSize(msg.data.savings_bytes)} (${msg.data.savings_pct}%)` : '';
+          this.showToast(`${msg.data.username||''} 合并完成: ${msg.data.filename||''} ${detail}${savings}`);
+          this.desktopNotify(`${msg.data.username||''} 合并完成`, msg.data.filename||'');
+          if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
+          // P1: 更新主播卡片状态
+          const m = this.models.find(x => x.username === msg.data.username);
+          if (m) m.merge_status = 'merged';
+        }
+        else if (msg.type === 'merge_error') {
+          this.activeMerges[msg.data.merge_id] = { status: 'error' };
+          this.showToast('合并失败: '+(msg.data.error||'未知错误'));
+          if (this.showModal && this.modalTab==='sessions') this.loadSessions();
+        }
+        else if (msg.type === 'merge_failed_permanent') {
+          // P0: 合并失败永久通知
+          this.showToast(`${msg.data.username} 合并失败（已重试${msg.data.retry_count}次）: ${msg.data.error||'未知错误'}`);
+          const m = this.models.find(x => x.username === msg.data.username);
+          if (m) m.merge_status = 'failed';
+        }
+        else if (msg.type === 'merge_confirm_required') {
+          // P0: 中等信心度需要用户确认
+          this.showToast(`${msg.data.username} 合并信心度 ${(msg.data.confidence*100).toFixed(0)}%，已自动合并`);
+        }
+        else if (msg.type === 'merge_low_confidence') {
+          // P0: 低信心度跳过合并
+          this.showToast(`${msg.data.username} 合并信心度过低 (${(msg.data.confidence*100).toFixed(0)}%)，已跳过`);
+        }
+        else if (msg.type === 'merge_cancelled') {
+          this.showToast(`${msg.data.username} 合并已取消`);
         }
         else if (msg.type === 'segment_warning') {
           const d = msg.data;
@@ -1594,7 +1883,6 @@ function app() {
           const d = msg.data;
           this.showToast(`${d.username} FlashCut 完成！生成了 ${d.count} 条短视频`);
           this.desktopNotify('FlashCut 完成', `${d.username} 生成了 ${d.count} 条短视频`);
-          if (this.uiMode === 'simple') this.loadSimpleMode();
           if (this.currentPage === 'clips') this.fetchClips();
           if (this.currentPage === 'highlights') this.fetchHighlights();
         }
@@ -1618,7 +1906,11 @@ function app() {
         for (const url of urls) {
           const r = await this._apiFetch('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
           if (r.ok) { added++; const d = await r.json(); if (urls.length === 1) this.showToast(`已添加 ${d.username}`); }
-          else if (urls.length === 1) { const err = await r.json().catch(()=>({})); this.showToast('添加失败: '+(err.detail||'未知错误')); }
+          else if (urls.length === 1) {
+            const err = await r.json().catch(()=>({}));
+            if (err.quota_exceeded) this.showToast('已达主播数上限，请升级套餐');
+            else this.showToast('添加失败: '+(err.error||err.detail||'未知错误'));
+          }
         }
         if (added > 0) { this.newModel = ''; if (urls.length > 1) this.showToast(`已添加 ${added} 个主播`); }
       } catch(e) { this.showToast('添加失败: 网络错误'); } finally { this.addingModel = false; }
@@ -1722,14 +2014,30 @@ function app() {
       if (!filename) { this.showToast('请选择视频文件'); return; }
       this.showToast('正在生成片段...');
       try {
+        const body = { username: this.modalUsername, filename, start_time: this.manualClipStart, end_time: this.manualClipEnd };
+        if (this.clipWatermark) body.watermark = this.clipWatermark;
         const r = await this._apiFetch('/api/clips/manual', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: this.modalUsername, filename, start_time: this.manualClipStart, end_time: this.manualClipEnd })
+          body: JSON.stringify(body)
         });
         const d = await r.json();
         if (d.status === 'done') this.showToast('片段生成完成');
+        else if (d.quota_exceeded) this.showToast('今日配额已用完，请升级套餐');
         else this.showToast('生成失败: ' + (d.error || ''));
       } catch(e) { this.showToast('生成请求失败'); }
+    },
+    previewClipRange() {
+      if (this.$refs.clipPreviewPlayer) {
+        this.$refs.clipPreviewPlayer.currentTime = this.manualClipStart;
+        this.$refs.clipPreviewPlayer.play();
+      }
+    },
+    loadClipPreview() {
+      const filename = this.modalDetectFile || (this.modalFiles[0]?.filename || '');
+      if (filename && this.modalUsername) {
+        this.clipPreviewUrl = `/api/video/${this.modalUsername}/${filename}#t=${this.manualClipStart}`;
+        this.clipVideoDuration = 0;
+      }
     },
 
     // ========== V2.0: 高光 + 片段 ==========
@@ -1770,6 +2078,7 @@ function app() {
         const r = await this._apiFetch(`/api/highlights/item/${highlightId}/clip`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         const d = await r.json();
         if (d.status === 'done') { this.showToast('片段生成完成'); await this.fetchHighlights(); }
+        else if (d.quota_exceeded) this.showToast('今日配额已用完，请升级套餐');
         else this.showToast('生成失败: ' + (d.error || '未知错误'));
       } catch(e) { this.showToast('生成请求失败'); }
     },
@@ -1815,6 +2124,106 @@ function app() {
       if (!confirm('确认删除此片段？')) return;
       try { await this._apiFetch(`/api/clips/item/${clipId}`, { method: 'DELETE' }); await this.fetchClips(); } catch(e) {}
     },
+    async openDistribute(clip) {
+      this.distClip = clip;
+      this.distTitle = clip.title || `${clip.username} 直播精彩片段`;
+      this.distDescription = '';
+      this.distTags = '';
+      this.distPlatform = '';
+      this.distStatus = '';
+      this.distError = '';
+      this.distRemoteUrl = '';
+      this.distBusy = false;
+      // 加载可用平台
+      try {
+        const r = await this._apiFetch('/api/distribute/platforms');
+        if (r.ok) { const d = await r.json(); this.distPlatforms = d.platforms || []; }
+      } catch(e) { this.distPlatforms = []; }
+      if (this.distPlatforms.length > 0) this.distPlatform = this.distPlatforms[0];
+      this.showDistribute = true;
+    },
+    async submitDistribute() {
+      if (!this.distClip || !this.distPlatform) return;
+      this.distBusy = true;
+      this.distStatus = 'pending';
+      this.distError = '';
+      try {
+        // 创建任务
+        const r = await this._apiFetch('/api/distribute', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clip_id: this.distClip.clip_id, platform: this.distPlatform,
+            title: this.distTitle, description: this.distDescription,
+            tags: this.distTags ? this.distTags.split(',').map(t => t.trim()).filter(Boolean) : []
+          })
+        });
+        const d = await r.json();
+        if (!d.ok) { this.distStatus = 'failed'; this.distError = d.error || '创建失败'; this.distBusy = false; return; }
+        const taskId = d.task.task_id;
+        this.distStatus = 'uploading';
+        // 执行任务
+        const r2 = await this._apiFetch(`/api/distribute/${taskId}/execute`, { method: 'POST' });
+        const d2 = await r2.json();
+        if (d2.ok) {
+          this.distStatus = d2.task.status;
+          this.distRemoteUrl = d2.task.remote_url || '';
+          if (d2.task.status === 'processing') {
+            // 轮询状态
+            for (let i = 0; i < 10; i++) {
+              await new Promise(r => setTimeout(r, 2000));
+              const r3 = await this._apiFetch(`/api/distribute/${taskId}/status`, { method: 'POST' });
+              const d3 = await r3.json();
+              if (d3.ok) {
+                this.distStatus = d3.task.status;
+                this.distRemoteUrl = d3.task.remote_url || '';
+                if (d3.task.status === 'published' || d3.task.status === 'failed') break;
+              }
+            }
+          }
+        } else {
+          this.distStatus = 'failed';
+          this.distError = d2.error || '执行失败';
+        }
+      } catch(e) { this.distStatus = 'failed'; this.distError = '请求失败'; }
+      this.distBusy = false;
+    },
+    async submitDistributeAssist() {
+      if (!this.distClip || !this.distPlatform) return;
+      this.distBusy = true;
+      try {
+        // 创建任务
+        const r = await this._apiFetch('/api/distribute', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clip_id: this.distClip.clip_id, platform: this.distPlatform,
+            title: this.distTitle, description: this.distDescription,
+            tags: this.distTags ? this.distTags.split(',').map(t => t.trim()).filter(Boolean) : []
+          })
+        });
+        const d = await r.json();
+        if (!d.ok) { this.distBusy = false; this.showToast(d.error || '创建失败'); return; }
+        const taskId = d.task.task_id;
+        // 执行获取辅助信息
+        const r2 = await this._apiFetch(`/api/distribute/${taskId}/execute`, { method: 'POST' });
+        const d2 = await r2.json();
+        const openUrl = d2?.task?.remote_url || (this.distPlatform === 'bilibili'
+          ? 'https://member.bilibili.com/platform/upload/video/frame'
+          : 'https://channels.weixin.qq.com/platform/post/create');
+        // 复制信息到剪贴板
+        const copyText = [
+          '标题：' + this.distTitle,
+          this.distDescription ? '描述：' + this.distDescription : '',
+          this.distTags ? '标签：' + this.distTags : '',
+          '视频文件：' + (this.distClip?.output_file || ''),
+        ].filter(Boolean).join('\n');
+        try { await navigator.clipboard.writeText(copyText); } catch(e) {}
+        // 打开投稿页
+        window.open(openUrl, '_blank');
+        this.showToast('信息已复制，请在投稿页手动粘贴并上传视频文件');
+        this.showDistribute = false;
+      } catch(e) { this.showToast('操作失败：' + e.message); }
+      this.distBusy = false;
+    },
     fmtTimestamp(seconds) {
       if (!seconds) return '0:00';
       const m = Math.floor(seconds / 60);
@@ -1822,46 +2231,76 @@ function app() {
       return `${m}:${s.toString().padStart(2, '0')}`;
     },
 
-    // ========== FlashCut V3 ==========
-    toggleUIMode() {
-      this.uiMode = this.uiMode === 'simple' ? 'advanced' : 'simple';
-      localStorage.setItem('flashcut_mode', this.uiMode);
-      if (this.uiMode === 'simple') this.loadSimpleMode();
-    },
-    async loadSimpleMode() {
-      // 加载最近片段
-      try {
-        let all = [];
-        for (const m of this.models.slice(0, 10)) {
-          try {
-            const r = await this._apiFetch(`/api/clips/${m.username}?limit=5`);
-            if (r.ok) { const d = await r.json(); all = all.concat(d); }
-          } catch(e) {}
-        }
-        this.recentClips = all.sort((a,b) => (b.created_at||0) - (a.created_at||0)).slice(0, 20);
-      } catch(e) {}
-      // 加载配额
-      if (this.models.length > 0) {
-        try {
-          const r = await this._apiFetch(`/api/quota/${this.models[0].username}`);
-          if (r.ok) this.quotaInfo = await r.json();
-        } catch(e) {}
-      }
-    },
-    async triggerFlashCut(username) {
-      this.showToast('FlashCut 流水线启动中...');
-      try {
-        const r = await this._apiFetch(`/api/flashcut/${username}/auto`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-        const d = await r.json();
-        if (d.ok) this.showToast(d.message || '已启动');
-        else this.showToast('启动失败: ' + (d.error || ''));
-      } catch(e) { this.showToast('请求失败'); }
-    },
     async startModel(username) {
       try { await this._apiFetch(`/api/models/${username}/start`, { method: 'POST' }); } catch(e) {}
     },
     async stopModel(username) {
       try { await this._apiFetch(`/api/models/${username}/stop`, { method: 'POST' }); } catch(e) {}
+    },
+
+    // ========== 用户认证 ==========
+    async checkAuth() {
+      const token = localStorage.getItem('sv_session');
+      if (!token) return;
+      try {
+        const r = await fetch(`/api/auth/me?session_token=${token}`);
+        if (r.ok) {
+          const d = await r.json();
+          this.authUser = d.user;
+          this.authRequired = false;
+        } else {
+          localStorage.removeItem('sv_session');
+        }
+      } catch(e) {}
+    },
+    async doLogin() {
+      this.authError = '';
+      this.authBusy = true;
+      try {
+        const r = await fetch('/api/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: this.authEmail, password: this.authPassword })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          localStorage.setItem('sv_session', d.session_token);
+          this.authUser = d.user;
+          this.authRequired = false;
+          this.authEmail = ''; this.authPassword = '';
+        } else {
+          this.authError = d.error || '登录失败';
+        }
+      } catch(e) { this.authError = '网络错误'; }
+      this.authBusy = false;
+    },
+    async doRegister() {
+      this.authError = '';
+      this.authBusy = true;
+      try {
+        const r = await fetch('/api/auth/register', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: this.authEmail, password: this.authPassword, display_name: this.authDisplayName })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          localStorage.setItem('sv_session', d.session_token);
+          this.authUser = d.user;
+          this.authRequired = false;
+          this.authEmail = ''; this.authPassword = ''; this.authDisplayName = '';
+        } else {
+          this.authError = d.error || '注册失败';
+        }
+      } catch(e) { this.authError = '网络错误'; }
+      this.authBusy = false;
+    },
+    async doLogout() {
+      const token = localStorage.getItem('sv_session');
+      if (token) {
+        try { await fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_token: token }) }); } catch(e) {}
+      }
+      localStorage.removeItem('sv_session');
+      this.authUser = null;
+      this.showUserMenu = false;
     },
 
     async mergeSession(sid) {
@@ -2076,6 +2515,61 @@ function app() {
   };
 }
 </script>
+
+<!-- P4: 主播设置 Modal -->
+<div x-show="modelSettingsModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="modelSettingsModal=false">
+  <div class="bg-surface rounded-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto">
+    <div class="sticky top-0 bg-surface px-6 py-4 border-b border-outline-variant/10 flex items-center justify-between">
+      <h3 class="text-lg font-bold" x-text="'设置 - ' + modelSettingsUsername"></h3>
+      <button @click="modelSettingsModal=false" class="p-1 hover:bg-surface-container-high rounded"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="p-6 space-y-4">
+      <div class="space-y-2">
+        <label class="text-xs font-bold text-on-surface-variant uppercase">录制质量</label>
+        <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3" x-model="modelSettings.quality">
+          <option value="best">最佳</option><option value="1080p">1080p</option><option value="720p">720p</option><option value="480p">480p</option><option value="audio_only">仅音频</option>
+        </select>
+      </div>
+      <div class="flex items-center justify-between">
+        <div><h4 class="text-sm font-semibold">自动合并</h4><p class="text-xs text-on-surface-variant">覆盖全局设置</p></div>
+        <select class="bg-surface-container-high border-none text-sm rounded-md h-10 px-3" x-model="modelSettings.auto_merge">
+          <option :value="null">继承全局</option><option :value="true">开启</option><option :value="false">关闭</option>
+        </select>
+      </div>
+      <div class="flex items-center justify-between">
+        <div><h4 class="text-sm font-semibold">H.265 转码</h4><p class="text-xs text-on-surface-variant">覆盖全局设置</p></div>
+        <select class="bg-surface-container-high border-none text-sm rounded-md h-10 px-3" x-model="modelSettings.h265_transcode">
+          <option :value="null">继承全局</option><option :value="true">开启</option><option :value="false">关闭</option>
+        </select>
+      </div>
+      <div class="space-y-2">
+        <label class="text-xs font-bold text-on-surface-variant uppercase">文件名模板</label>
+        <input class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3" x-model="modelSettings.filename_template" placeholder="留空继承全局"/>
+        <p class="text-[10px] text-on-surface-variant/60">变量: {username} {date} {time} {duration}</p>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase">按时长分割(分钟)</label>
+          <input type="number" class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3" x-model.number="modelSettings.split_by_duration_minutes" placeholder="0=禁用"/>
+        </div>
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase">按大小分割(MB)</label>
+          <input type="number" class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3" x-model.number="modelSettings.split_by_size_mb" placeholder="0=禁用"/>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <label class="text-xs font-bold text-on-surface-variant uppercase">会话复用(秒)</label>
+        <input type="number" class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3" x-model.number="modelSettings.session_reuse_seconds" placeholder="留空继承全局"/>
+        <p class="text-[10px] text-on-surface-variant/60">断流后多久内重连视为同一会话</p>
+      </div>
+      <div class="space-y-2">
+        <label class="text-xs font-bold text-on-surface-variant uppercase">备注</label>
+        <textarea class="w-full bg-surface-container-high border-none text-sm rounded-md p-3 focus:ring-1 focus:ring-primary" x-model="modelSettings.notes" rows="2" placeholder="可选备注信息"></textarea>
+      </div>
+      <button class="w-full h-10 bg-primary text-on-primary rounded-md font-bold hover:bg-primary/90 transition-colors" @click="saveModelSettings()">保存设置</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

@@ -12,10 +12,11 @@ from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Optional
 
 from recorder import ModelInfo, RecorderManager, RecordingSession, RecordingState
 from database import Database
@@ -126,6 +127,12 @@ async def on_merge_update(username: str, merge_id: str, status: str, **kwargs):
         msg_type = "auto_merge_done"
     elif status == "done":
         msg_type = "merge_done"
+    elif status == "merge_confirm_required":
+        msg_type = "merge_confirm_required"
+    elif status == "merge_failed_permanent":
+        msg_type = "merge_failed_permanent"
+    elif status == "merge_low_confidence":
+        msg_type = "merge_low_confidence"
     else:
         msg_type = "merge_error"
     await broadcast({"type": msg_type, "data": data})
@@ -223,6 +230,19 @@ def save_config():
             item["schedule"] = rec.schedule
         if rec.quality != "best":
             item["quality"] = rec.quality
+        # per-model 配置保存
+        if getattr(rec, "_per_model_h265", None) is not None:
+            item["h265_transcode"] = rec._per_model_h265
+        if getattr(rec, "_per_model_filename_template", None) is not None:
+            item["filename_template"] = rec._per_model_filename_template
+        if getattr(rec, "_per_model_split_duration", None) is not None:
+            item["split_by_duration_minutes"] = rec._per_model_split_duration
+        if getattr(rec, "_per_model_split_size", None) is not None:
+            item["split_by_size_mb"] = rec._per_model_split_size
+        if getattr(rec, "_per_model_session_reuse", None) is not None:
+            item["session_reuse_seconds"] = rec._per_model_session_reuse
+        if getattr(rec, "_notes", ""):
+            item["notes"] = rec._notes
         models.append(item)
     data = {"models": models, **app_settings}
     with open(CONFIG_FILE, "w") as f:
@@ -241,10 +261,16 @@ async def lifespan(app: FastAPI):
             saved_name = item.get("name", "")
             saved_schedule = item.get("schedule")
             saved_quality = item.get("quality")
+            # per-model 配置
+            saved_per_model = {k: item[k] for k in (
+                "h265_transcode", "filename_template", "split_by_duration_minutes",
+                "split_by_size_mb", "session_reuse_seconds", "notes",
+            ) if k in item}
         else:
             url = item
             saved_name = ""
             saved_schedule = None
+            saved_per_model = {}
         if not url:
             continue
         info = manager.add_model(url)
@@ -265,6 +291,26 @@ async def lifespan(app: FastAPI):
                 rec.schedule = saved_schedule
             if saved_quality:
                 rec.quality = saved_quality
+            # 恢复 per-model 配置
+            if "h265_transcode" in saved_per_model:
+                rec._per_model_h265 = saved_per_model["h265_transcode"]
+            if "filename_template" in saved_per_model:
+                rec._per_model_filename_template = saved_per_model["filename_template"]
+            if "split_by_duration_minutes" in saved_per_model:
+                v = saved_per_model["split_by_duration_minutes"]
+                rec._per_model_split_duration = v
+                rec.split_by_duration = (v or 0) * 60
+            if "split_by_size_mb" in saved_per_model:
+                v = saved_per_model["split_by_size_mb"]
+                rec._per_model_split_size = v
+                rec.split_by_size = (v or 0) * 1024 * 1024
+            if "session_reuse_seconds" in saved_per_model:
+                v = saved_per_model["session_reuse_seconds"]
+                rec._per_model_session_reuse = v
+                if v is not None:
+                    rec.session_reuse_window = v
+            if "notes" in saved_per_model:
+                rec._notes = saved_per_model["notes"]
                 rec.info.quality = saved_quality
     apply_settings_to_recorders()
     await manager.start_all()
@@ -277,6 +323,9 @@ async def lifespan(app: FastAPI):
     # 录制保留策略定时任务
     if app_settings.get("retention_days", 0) > 0:
         asyncio.create_task(_retention_cleanup_loop())
+
+    # 过期 session 定期清理（每小时）
+    asyncio.create_task(_session_cleanup_loop())
 
     yield
 
@@ -368,6 +417,17 @@ async def _retention_cleanup_loop():
             logger.error(f"Retention cleanup error: {e}")
 
 
+async def _session_cleanup_loop():
+    """每小时清理过期的用户 session"""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            from auth import AuthManager
+            AuthManager(db).cleanup_expired_sessions()
+        except Exception as e:
+            logger.error(f"Session cleanup error: {e}")
+
+
 async def _do_retention_cleanup(days: int):
     """执行保留策略清理"""
     cutoff = time.time() - days * 86400
@@ -405,6 +465,7 @@ def apply_settings_to_recorders():
     manager._highlight_config = {k: v for k, v in app_settings.items() if k.startswith("highlight_")}
     manager.cloud.config = app_settings.get("cloud_upload") or None
     manager.webhook.webhooks = app_settings.get("webhooks", [])
+    manager._merge_gap_minutes = app_settings.get("merge_gap_minutes", 15)
     reuse_window = app_settings.get("session_reuse_seconds", 30)
     split_size = app_settings.get("split_by_size_mb", 0)
     split_duration = app_settings.get("split_by_duration_minutes", 0)
@@ -487,6 +548,76 @@ if AUTH_TOKEN:
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
+# ========== 用户认证 ==========
+
+@app.post("/api/auth/register")
+async def auth_register(req: dict):
+    """用户注册"""
+    from auth import AuthManager
+    am = AuthManager(db)
+    try:
+        user = am.register(
+            email=req.get("email", ""),
+            password=req.get("password", ""),
+            display_name=req.get("display_name", "")
+        )
+        # 注册后自动登录
+        result = am.login(req["email"], req["password"])
+        return JSONResponse({"ok": True, **result})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: dict):
+    """用户登录"""
+    from auth import AuthManager
+    am = AuthManager(db)
+    try:
+        result = am.login(
+            email=req.get("email", ""),
+            password=req.get("password", "")
+        )
+        return JSONResponse({"ok": True, **result})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(req: dict):
+    """用户注销"""
+    from auth import AuthManager
+    am = AuthManager(db)
+    token = req.get("session_token", "")
+    am.logout(token)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request):
+    """获取当前用户信息"""
+    from auth import AuthManager
+    from quota import QuotaManager
+    am = AuthManager(db)
+    token = request.query_params.get("session_token") or request.headers.get("X-Session-Token", "")
+    user = am.validate_session(token)
+    if not user:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    # 附加套餐信息，前端用于显示升级按钮
+    tier_info = QuotaManager(db).get_tier_info(user["user_id"])
+    user["tier"] = tier_info["tier"]
+    user["tier_name"] = tier_info["tier_name"]
+    return JSONResponse({"ok": True, "user": user})
+
+
+@app.get("/api/auth/users")
+async def auth_users():
+    """获取所有用户（管理员）"""
+    from auth import AuthManager
+    am = AuthManager(db)
+    return JSONResponse(am.get_users())
+
+
 # ========== 页面 ==========
 
 @app.get("/")
@@ -539,6 +670,18 @@ class AddModelRequest(BaseModel):
 
 @app.post("/api/models")
 async def add_model(req: AddModelRequest):
+    from quota import QuotaManager
+    qm = QuotaManager(db)
+    username_key = "default"
+    tier_info = qm.get_tier_info(username_key)
+    max_models = tier_info["features"].get("max_models", 3)
+    current_count = len(manager.recorders)
+    if max_models > 0 and current_count >= max_models:
+        return JSONResponse(
+            {"error": f"已达到套餐主播数上限 ({current_count}/{max_models})，请升级套餐",
+             "quota_exceeded": True, "limit": max_models},
+            status_code=429,
+        )
     info = manager.add_model(req.url)
     key = info.username
     await manager.start_model(key)
@@ -1058,6 +1201,74 @@ async def toggle_model_auto_merge(username: str, req: dict):
     return JSONResponse({"ok": True, "auto_merge": enabled})
 
 
+# P4: per-model 配置的允许字段
+_MODEL_SETTINGS_FIELDS = {
+    "quality", "auto_merge", "h265_transcode", "filename_template",
+    "split_by_duration_minutes", "split_by_size_mb", "session_reuse_seconds", "notes",
+}
+
+
+@app.get("/api/models/{username}/settings")
+async def get_model_settings(username: str):
+    """获取主播的独立配置"""
+    rec = manager.recorders.get(username)
+    if not rec:
+        return JSONResponse({"error": "主播不存在"}, status_code=404)
+    settings = {
+        "quality": rec.quality,
+        "auto_merge": rec.auto_merge,
+        "h265_transcode": getattr(rec, "_per_model_h265", None),
+        "filename_template": getattr(rec, "_per_model_filename_template", None),
+        "split_by_duration_minutes": getattr(rec, "_per_model_split_duration", None),
+        "split_by_size_mb": getattr(rec, "_per_model_split_size", None),
+        "session_reuse_seconds": getattr(rec, "_per_model_session_reuse", None),
+        "notes": getattr(rec, "_notes", ""),
+    }
+    return JSONResponse(settings)
+
+
+@app.put("/api/models/{username}/settings")
+async def update_model_settings(username: str, req: dict):
+    """更新主播的独立配置（覆盖全局设置）"""
+    rec = manager.recorders.get(username)
+    if not rec:
+        return JSONResponse({"error": "主播不存在"}, status_code=404)
+    unknown = set(req.keys()) - _MODEL_SETTINGS_FIELDS
+    if unknown:
+        return JSONResponse({"error": f"不支持的配置项: {unknown}"}, status_code=400)
+
+    if "quality" in req:
+        rec.quality = req["quality"]
+        rec.info.quality = req["quality"]
+    if "auto_merge" in req:
+        rec.auto_merge = bool(req["auto_merge"])
+        rec.info.auto_merge = bool(req["auto_merge"])
+    if "h265_transcode" in req:
+        v = req["h265_transcode"]
+        rec._per_model_h265 = v  # None = 继承全局
+    if "filename_template" in req:
+        rec._per_model_filename_template = req["filename_template"] or None
+    if "split_by_duration_minutes" in req:
+        v = req["split_by_duration_minutes"]
+        rec._per_model_split_duration = v
+        rec.split_by_duration = (v or 0) * 60
+    if "split_by_size_mb" in req:
+        v = req["split_by_size_mb"]
+        rec._per_model_split_size = v
+        rec.split_by_size = (v or 0) * 1024 * 1024
+    if "session_reuse_seconds" in req:
+        v = req["session_reuse_seconds"]
+        rec._per_model_session_reuse = v
+        if v is not None:
+            rec.session_reuse_window = v
+    if "notes" in req:
+        rec._notes = req["notes"]
+
+    save_config()
+    await broadcast({"type": "model_update", "data": rec.info.to_dict()})
+    return JSONResponse({"ok": True})
+
+
 @app.get("/api/merge-history/{username}")
 async def get_merge_history(username: str):
     """获取指定主播的合并历史"""
@@ -1195,6 +1406,7 @@ async def cancel_merge(username: str, merge_id: str):
         for s_dict in manager.get_sessions(username):
             if s_dict.get("status") == "merging":
                 manager.update_session_status(username, s_dict["session_id"], "ended", merge_error="")
+        await broadcast({"type": "merge_cancelled", "data": {"username": username, "merge_id": merge_id}})
         return JSONResponse({"ok": True})
     return JSONResponse({"error": "合并任务不存在或已完成"}, status_code=400)
 
@@ -1644,6 +1856,11 @@ async def generate_clip_from_highlight(highlight_id: str, req: dict = {}):
         return JSONResponse({"error": "高光不存在"}, status_code=404)
 
     username = h["username"]
+    from quota import QuotaManager
+    allowed, used, limit = QuotaManager(db).check_quota(username)
+    if not allowed:
+        return JSONResponse({"error": f"今日配额已用完 ({used}/{limit})，请升级套餐", "quota_exceeded": True}, status_code=429)
+
     video_path = Path(RECORDINGS_DIR) / username / h["video_file"]
     if not video_path.exists():
         return JSONResponse({"error": f"视频文件不存在: {h['video_file']}"}, status_code=404)
@@ -1666,6 +1883,7 @@ async def generate_clip_from_highlight(highlight_id: str, req: dict = {}):
     result = await gen.generate_clip(video_path, h, danmaku_path)
 
     if result.get("status") == "done":
+        QuotaManager(db).consume_quota(username)
         db.insert_clip(
             clip_id=result["clip_id"], highlight_id=highlight_id, username=username,
             output_file=result.get("output_file", ""), resolution=result.get("resolution", ""),
@@ -1700,6 +1918,14 @@ async def batch_generate_clips(req: dict):
         if not h:
             continue
         username = h["username"]
+
+        from quota import QuotaManager
+        allowed, used, limit = QuotaManager(db).check_quota(username)
+        if not allowed:
+            results.append({"status": "quota_exceeded", "highlight_id": hid,
+                            "error": f"今日配额已用完 ({used}/{limit})"})
+            continue
+
         video_path = Path(RECORDINGS_DIR) / username / h["video_file"]
         if not video_path.exists():
             continue
@@ -1715,6 +1941,7 @@ async def batch_generate_clips(req: dict):
 
         result = await gen.generate_clip(video_path, h, danmaku_path)
         if result.get("status") == "done":
+            QuotaManager(db).consume_quota(username)
             db.insert_clip(
                 clip_id=result["clip_id"], highlight_id=hid, username=username,
                 output_file=result.get("output_file", ""), resolution=result.get("resolution", ""),
@@ -1871,6 +2098,21 @@ async def create_manual_clip(req: dict):
     if not video_path.exists():
         return JSONResponse({"error": f"文件不存在: {filename}"}, status_code=404)
 
+    from quota import QuotaManager
+    qm = QuotaManager(db)
+    allowed, used, limit = qm.check_quota(username)
+    if not allowed:
+        return JSONResponse({"error": f"今日配额已用完 ({used}/{limit})，请升级套餐", "quota_exceeded": True}, status_code=429)
+
+    max_duration = qm.get_tier_info(username)["features"].get("max_clip_duration", 60)
+    requested_duration = end_time - start_time
+    if requested_duration > max_duration:
+        return JSONResponse(
+            {"error": f"片段时长 {int(requested_duration)}s 超过套餐上限 {max_duration}s，请升级套餐",
+             "quota_exceeded": True, "max_duration": max_duration},
+            status_code=429,
+        )
+
     # 构造虚拟 highlight
     import uuid as _uuid
     highlight = {
@@ -1899,6 +2141,7 @@ async def create_manual_clip(req: dict):
 
     if result.get("status") == "done":
         title = req.get("title", f"手动片段 {int(start_time//60)}:{int(start_time%60):02d}")
+        QuotaManager(db).consume_quota(username)
         db.insert_clip(
             clip_id=result["clip_id"], highlight_id="", username=username,
             output_file=result.get("output_file", ""), resolution=result.get("resolution", ""),
@@ -2001,16 +2244,27 @@ async def export_clip_local(clip_id: str, req: dict = {}):
 
 @app.get("/api/quota/{username}")
 async def get_quota(username: str):
-    """查询用户配额"""
+    """查询用户配额（完整套餐信息）"""
     from quota import QuotaManager
     qm = QuotaManager(db)
-    allowed, used, limit = qm.check_quota(username)
-    tier = qm.get_tier(username)
-    return JSONResponse({
-        "username": username, "tier": tier,
-        "used_today": used, "daily_limit": limit,
-        "remaining": max(0, limit - used), "allowed": allowed,
-    })
+    info = qm.get_tier_info(username)
+    info["username"] = username
+    return JSONResponse(info)
+
+
+@app.get("/api/quota/{username}/history")
+async def get_quota_history(username: str, days: int = 30):
+    """查询使用历史"""
+    from quota import QuotaManager
+    qm = QuotaManager(db)
+    return JSONResponse(qm.get_usage_history(username, days))
+
+
+@app.get("/api/tiers")
+async def get_tier_definitions():
+    """获取所有套餐定义"""
+    from quota import QuotaManager
+    return JSONResponse(QuotaManager.get_tier_definitions())
 
 
 @app.post("/api/tier/{username}")
@@ -2018,45 +2272,13 @@ async def set_tier(username: str, req: dict):
     """设置用户等级"""
     from quota import QuotaManager
     tier = req.get("tier", "free")
-    if tier not in ("free", "pro", "team"):
-        return JSONResponse({"error": "无效等级"}, status_code=400)
     expires_at = req.get("expires_at", 0)
     qm = QuotaManager(db)
-    qm.set_tier(username, tier, expires_at)
-    return JSONResponse({"ok": True, "tier": tier})
-
-
-@app.get("/api/waveform/{session_id}")
-async def get_waveform(session_id: str):
-    """获取热度波形 SVG"""
-    dm = db.get_danmaku(session_id)
-    if not dm or not dm.get("file_path"):
-        from waveform import _empty_svg
-        return Response(content=_empty_svg(800, 120), media_type="image/svg+xml")
-    fp = Path(dm["file_path"])
-    if not fp.exists():
-        from waveform import _empty_svg
-        return Response(content=_empty_svg(800, 120), media_type="image/svg+xml")
     try:
-        with open(fp, encoding="utf-8") as f:
-            data = json.load(f)
-        messages = data.get("messages", [])
-        chat_msgs = [m for m in messages if m.get("type") == "chat"]
-        if not chat_msgs:
-            from waveform import _empty_svg
-            return Response(content=_empty_svg(800, 120), media_type="image/svg+xml")
-        max_t = max(m["t"] for m in chat_msgs)
-        window = 10
-        timeline = []
-        for t in range(0, int(max_t) + 1, window):
-            count = sum(1 for m in chat_msgs if t <= m["t"] < t + window)
-            timeline.append({"t": t, "density": round(count / window, 2), "count": count})
-        from waveform import generate_waveform_svg
-        svg = generate_waveform_svg(timeline)
-        return Response(content=svg, media_type="image/svg+xml")
-    except Exception:
-        from waveform import _empty_svg
-        return Response(content=_empty_svg(800, 120), media_type="image/svg+xml")
+        qm.set_tier(username, tier, expires_at)
+        return JSONResponse({"ok": True, "tier": tier})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 @app.post("/api/flashcut/{username}/auto")
@@ -2108,6 +2330,420 @@ async def check_whisper():
         return JSONResponse({"available": available})
     except Exception:
         return JSONResponse({"available": False})
+
+
+# ========== 分发 ==========
+
+_distribute_manager = None
+
+def _get_distribute_manager():
+    global _distribute_manager
+    if _distribute_manager is None:
+        from distribute import (DistributeManager, MockPublisher,
+                                DouyinPublisher, KuaishouPublisher,
+                                BilibiliAssistPublisher, WeixinVideoPublisher)
+        _distribute_manager = DistributeManager(db)
+        # mock 发布器（测试用）
+        _distribute_manager.register_publisher("mock", MockPublisher())
+        _distribute_manager.set_credentials("mock", {"token": "test"})
+        # OAuth 发布器（需要用户授权后才有效凭据）
+        _distribute_manager.register_publisher("douyin", DouyinPublisher())
+        _distribute_manager.register_publisher("kuaishou", KuaishouPublisher())
+        # 辅助投稿（无需凭据，开箱即用）
+        _distribute_manager.register_publisher("bilibili", BilibiliAssistPublisher())
+        _distribute_manager.set_credentials("bilibili", {})
+        _distribute_manager.register_publisher("weixinvideo", WeixinVideoPublisher())
+        _distribute_manager.set_credentials("weixinvideo", {})
+        # 从数据库加载已保存的 OAuth 凭据
+        for platform in ("douyin", "kuaishou"):
+            cred = db.get_credential("default", platform)
+            if cred and cred.get("access_token"):
+                _distribute_manager.set_credentials(platform, {
+                    "access_token": cred["access_token"],
+                    "refresh_token": cred.get("refresh_token", ""),
+                    "openid": cred.get("openid", ""),
+                    "expires_at": cred.get("expires_at", 0),
+                })
+    return _distribute_manager
+
+
+@app.get("/api/distribute/platforms")
+async def get_distribute_platforms():
+    """获取可用的分发平台"""
+    dm = _get_distribute_manager()
+    return JSONResponse({"platforms": dm.get_available_platforms()})
+
+
+@app.post("/api/distribute")
+async def create_distribute_task(req: dict):
+    """创建分发任务"""
+    clip_id = req.get("clip_id", "")
+    platform = req.get("platform", "")
+    title = req.get("title", "")
+    description = req.get("description", "")
+    tags = req.get("tags", [])
+
+    if not clip_id or not platform:
+        return JSONResponse({"error": "clip_id and platform required"}, status_code=400)
+
+    clip = db.get_clip(clip_id)
+    if not clip:
+        return JSONResponse({"error": "clip not found"}, status_code=404)
+
+    file_path = clip.get("output_file", "")
+    username = clip.get("username", "")
+
+    dm = _get_distribute_manager()
+    try:
+        task = await dm.create_task(
+            clip_id=clip_id, username=username, platform=platform,
+            file_path=file_path, title=title, description=description, tags=tags
+        )
+        return JSONResponse({"ok": True, "task": task.to_dict()})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/distribute/{task_id}/execute")
+async def execute_distribute_task(task_id: str):
+    """执行分发任务（上传+发布）"""
+    dm = _get_distribute_manager()
+    task_data = dm.get_task(task_id)
+    if not task_data:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+    try:
+        task = await dm.execute_task(task_id)
+        return JSONResponse({"ok": True, "task": task.to_dict()})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/distribute/{task_id}/status")
+async def check_distribute_status(task_id: str):
+    """查询分发任务的平台状态"""
+    dm = _get_distribute_manager()
+    task = await dm.check_task_status(task_id)
+    if not task:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+    return JSONResponse({"ok": True, "task": task.to_dict()})
+
+
+@app.get("/api/distribute/tasks")
+async def get_distribute_tasks(username: str = "", platform: str = ""):
+    """获取分发任务列表"""
+    tasks = db.get_distribute_tasks(username=username, platform=platform)
+    return JSONResponse(tasks)
+
+
+@app.get("/api/distribute/tasks/{task_id}")
+async def get_distribute_task(task_id: str):
+    """获取单个分发任务"""
+    task = db.get_distribute_task(task_id)
+    if not task:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+    return JSONResponse(task)
+
+
+def _get_request_user_id(request: Optional[Request]) -> str:
+    """从请求 session token 中获取 user_id，未登录返回 'default'"""
+    if request is None:
+        return "default"
+    token = request.headers.get("X-Session-Token") or request.query_params.get("session_token", "")
+    if not token:
+        return "default"
+    try:
+        from auth import AuthManager
+        user = AuthManager(db).validate_session(token)
+        return user["user_id"] if user else "default"
+    except Exception:
+        return "default"
+
+
+# ========== OAuth — 抖音 / 快手 ==========
+
+OAUTH_CONFIGS = {
+    "douyin": {
+        "client_key": os.environ.get("DOUYIN_CLIENT_KEY", ""),
+        "client_secret": os.environ.get("DOUYIN_CLIENT_SECRET", ""),
+        "redirect_uri": os.environ.get("DOUYIN_REDIRECT_URI", ""),
+        "authorize_url": "https://open.douyin.com/platform/oauth/connect/",
+        "token_url": "https://open.douyin.com/oauth/access_token/",
+        "refresh_url": "https://open.douyin.com/oauth/refresh_token/",
+        "scope": "user_info,video.create",
+    },
+    "kuaishou": {
+        "client_key": os.environ.get("KUAISHOU_CLIENT_KEY", ""),
+        "client_secret": os.environ.get("KUAISHOU_CLIENT_SECRET", ""),
+        "redirect_uri": os.environ.get("KUAISHOU_REDIRECT_URI", ""),
+        "authorize_url": "https://open.kuaishou.com/oauth2/authorize",
+        "token_url": "https://open.kuaishou.com/oauth2/access_token",
+        "refresh_url": "https://open.kuaishou.com/oauth2/refresh_token",
+        "scope": "user_info,photo.publish",
+    },
+}
+
+
+@app.get("/api/oauth/{platform}/authorize")
+async def oauth_authorize(platform: str, request: Request):
+    """返回 OAuth 授权 URL"""
+    if platform not in OAUTH_CONFIGS:
+        return JSONResponse({"error": f"Unsupported platform: {platform}"}, status_code=400)
+    cfg = OAUTH_CONFIGS[platform]
+    if not cfg["client_key"]:
+        return JSONResponse({
+            "error": f"{platform.upper()}_CLIENT_KEY not configured",
+            "setup_required": True,
+        }, status_code=503)
+    import secrets as _secrets
+    state = _secrets.token_hex(16)
+    if platform == "douyin":
+        url = (
+            f"{cfg['authorize_url']}?client_key={cfg['client_key']}"
+            f"&response_type=code&scope={cfg['scope']}"
+            f"&redirect_uri={cfg['redirect_uri']}&state={state}"
+        )
+    else:
+        url = (
+            f"{cfg['authorize_url']}?app_id={cfg['client_key']}"
+            f"&response_type=code&scope={cfg['scope']}"
+            f"&redirect_uri={cfg['redirect_uri']}&state={state}"
+        )
+    return JSONResponse({"url": url, "state": state})
+
+
+@app.get("/api/oauth/{platform}/callback")
+async def oauth_callback(platform: str, code: str = "", state: str = "", error: str = ""):
+    """处理 OAuth 回调，用 code 换取 access_token"""
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    if platform not in OAUTH_CONFIGS:
+        return JSONResponse({"error": f"Unsupported platform: {platform}"}, status_code=400)
+    if not code:
+        return JSONResponse({"error": "Missing authorization code"}, status_code=400)
+
+    cfg = OAUTH_CONFIGS[platform]
+    if not cfg["client_key"] or not cfg["client_secret"]:
+        return JSONResponse({"error": f"{platform.upper()} credentials not configured"}, status_code=503)
+
+    try:
+        import aiohttp as _aiohttp
+        if platform == "douyin":
+            params = {
+                "client_key": cfg["client_key"],
+                "client_secret": cfg["client_secret"],
+                "code": code,
+                "grant_type": "authorization_code",
+            }
+        else:
+            params = {
+                "app_id": cfg["client_key"],
+                "app_secret": cfg["client_secret"],
+                "code": code,
+                "grant_type": "authorization_code",
+            }
+        async with _aiohttp.ClientSession() as session:
+            async with session.get(cfg["token_url"], params=params) as resp:
+                data = await resp.json()
+
+        if platform == "douyin":
+            token_data = data.get("data", {})
+            access_token = token_data.get("access_token", "")
+            refresh_token = token_data.get("refresh_token", "")
+            openid = token_data.get("open_id", "")
+            expires_in = token_data.get("expires_in", 86400 * 15)
+        else:
+            access_token = data.get("access_token", "")
+            refresh_token = data.get("refresh_token", "")
+            openid = data.get("open_id", "")
+            expires_in = data.get("expires_in", 86400 * 15)
+
+        if not access_token:
+            return JSONResponse({"error": "Failed to get access_token", "detail": data}, status_code=400)
+
+        expires_at = time.time() + expires_in
+        # 存储凭据：优先使用登录用户的 user_id，否则用 "default"
+        user_id = _get_request_user_id(None)
+        db.save_credential(user_id, platform, access_token, refresh_token, openid, "", expires_at)
+        # 同步到分发管理器
+        dm = _get_distribute_manager()
+        dm.set_credentials(platform, {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "openid": openid,
+            "expires_at": expires_at,
+        })
+        logger.info(f"OAuth success: {platform} (openid={openid})")
+        return JSONResponse({"ok": True, "platform": platform, "openid": openid, "expires_at": expires_at})
+    except Exception as e:
+        logger.error(f"OAuth callback error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/oauth/{platform}/refresh")
+async def oauth_refresh(platform: str, request: Request):
+    """刷新 access_token"""
+    if platform not in OAUTH_CONFIGS:
+        return JSONResponse({"error": f"Unsupported platform: {platform}"}, status_code=400)
+    cfg = OAUTH_CONFIGS[platform]
+    user_id = _get_request_user_id(request)
+    cred = db.get_credential(user_id, platform)
+    if not cred or not cred.get("refresh_token"):
+        return JSONResponse({"error": "No refresh_token, re-authorize required"}, status_code=400)
+
+    try:
+        import aiohttp as _aiohttp
+        if platform == "douyin":
+            params = {
+                "client_key": cfg["client_key"],
+                "refresh_token": cred["refresh_token"],
+                "grant_type": "refresh_token",
+            }
+        else:
+            params = {
+                "app_id": cfg["client_key"],
+                "app_secret": cfg["client_secret"],
+                "refresh_token": cred["refresh_token"],
+                "grant_type": "refresh_token",
+            }
+        async with _aiohttp.ClientSession() as session:
+            async with session.get(cfg["refresh_url"], params=params) as resp:
+                data = await resp.json()
+
+        if platform == "douyin":
+            token_data = data.get("data", {})
+            access_token = token_data.get("access_token", "")
+            expires_in = token_data.get("expires_in", 86400 * 15)
+        else:
+            access_token = data.get("access_token", "")
+            expires_in = data.get("expires_in", 86400 * 15)
+
+        if not access_token:
+            return JSONResponse({"error": "Refresh failed", "detail": data}, status_code=400)
+
+        expires_at = time.time() + expires_in
+        db.save_credential(user_id, platform, access_token, cred.get("refresh_token", ""),
+                           cred.get("openid", ""), cred.get("display_name", ""), expires_at)
+        dm = _get_distribute_manager()
+        dm.set_credentials(platform, {"access_token": access_token, "openid": cred.get("openid", ""), "expires_at": expires_at})
+        return JSONResponse({"ok": True, "expires_at": expires_at})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/oauth/{platform}/revoke")
+async def oauth_revoke(platform: str, request: Request):
+    """撤销平台授权"""
+    if platform not in OAUTH_CONFIGS:
+        return JSONResponse({"error": f"Unsupported platform: {platform}"}, status_code=400)
+    user_id = _get_request_user_id(request)
+    db.delete_credential(user_id, platform)
+    dm = _get_distribute_manager()
+    dm._credentials.pop(platform, None)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/oauth/{platform}/status")
+async def oauth_status(platform: str, request: Request):
+    """查询平台授权状态"""
+    if platform not in OAUTH_CONFIGS and platform not in ("bilibili", "weixinvideo"):
+        return JSONResponse({"error": f"Unsupported platform: {platform}"}, status_code=400)
+    if platform in ("bilibili", "weixinvideo"):
+        return JSONResponse({"authorized": True, "assist_mode": True})
+    user_id = _get_request_user_id(request)
+    cred = db.get_credential(user_id, platform)
+    if not cred or not cred.get("access_token"):
+        cfg = OAUTH_CONFIGS.get(platform, {})
+        return JSONResponse({
+            "authorized": False,
+            "setup_required": not cfg.get("client_key"),
+        })
+    expires_at = cred.get("expires_at", 0)
+    expired = expires_at > 0 and expires_at < time.time()
+    return JSONResponse({
+        "authorized": not expired,
+        "expired": expired,
+        "openid": cred.get("openid", ""),
+        "display_name": cred.get("display_name", ""),
+        "expires_at": expires_at,
+    })
+
+
+# ========== 支付（Stripe） ==========
+
+_payment_manager = None
+
+
+def _get_payment_manager():
+    global _payment_manager
+    if _payment_manager is None:
+        try:
+            from payment import PaymentManager
+            _payment_manager = PaymentManager(db)
+        except ImportError:
+            _payment_manager = None
+    return _payment_manager
+
+
+@app.get("/api/payment/tiers")
+async def payment_tiers():
+    """获取套餐定义"""
+    pm = _get_payment_manager()
+    if not pm:
+        return JSONResponse({"error": "payment module not available"}, status_code=503)
+    from payment import TIER_FEATURES
+    return JSONResponse({"tiers": TIER_FEATURES})
+
+
+@app.post("/api/payment/checkout")
+async def payment_checkout(req: dict, request: Request):
+    """创建 Stripe Checkout 会话"""
+    pm = _get_payment_manager()
+    if not pm:
+        return JSONResponse({"error": "payment module not available"}, status_code=503)
+    tier = req.get("tier", "pro")
+    user_id = req.get("user_id", "default")
+    user_email = req.get("email", "")
+    result = await pm.create_checkout_session(user_id, user_email, tier)
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return JSONResponse(result)
+
+
+@app.post("/api/payment/webhook")
+async def payment_webhook(request: Request):
+    """Stripe Webhook 回调"""
+    pm = _get_payment_manager()
+    if not pm:
+        return JSONResponse({"error": "payment module not available"}, status_code=503)
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+    result = await pm.handle_webhook(payload, sig_header)
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return JSONResponse(result)
+
+
+@app.post("/api/payment/cancel")
+async def payment_cancel(req: dict):
+    """取消订阅"""
+    pm = _get_payment_manager()
+    if not pm:
+        return JSONResponse({"error": "payment module not available"}, status_code=503)
+    user_id = req.get("user_id", "default")
+    result = await pm.cancel_subscription(user_id)
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return JSONResponse(result)
+
+
+@app.get("/api/payment/status")
+async def payment_status(user_id: str = "default"):
+    """查询订阅状态"""
+    pm = _get_payment_manager()
+    if not pm:
+        return JSONResponse({"tier": "free", "status": "free", "payment_unavailable": True})
+    result = pm.get_subscription_status(user_id)
+    return JSONResponse(result)
 
 
 # ========== 启动 ==========

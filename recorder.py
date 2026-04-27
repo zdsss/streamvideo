@@ -1,6 +1,6 @@
 """
 多平台直播录制引擎
-- 支持 Stripchat、抖音等平台
+- 支持抖音、B站、Twitch、YouTube 等平台
 - 自动检测平台和解析主播信息
 - yt-dlp / streamlink / Playwright 多引擎录制
 - 自动重连 + 宽限期 + 自动合并
@@ -181,16 +181,6 @@ def detect_platform(url_or_id: str) -> tuple[str, str, str]:
         if m:
             return "youtube", url, f"YT_{m.group(1)}"
         return "youtube", url, "YouTube"
-
-    # Stripchat
-    if "stripchat.com" in url:
-        m = re.search(r'stripchat\.com/([^/?&#\s]+)', url)
-        username = m.group(1) if m else url
-        return "stripchat", username, username
-
-    # 纯用户名（默认 Stripchat）
-    if not url.startswith("http"):
-        return "stripchat", url, url
 
     # 未知平台，尝试用 streamlink
     return "generic", url, urlparse(url).netloc.split(".")[0]
@@ -884,276 +874,6 @@ class BaseLiveRecorder:
         return False
 
 
-# ========== Stripchat ==========
-
-class StripchatRecorder(BaseLiveRecorder):
-    platform = "stripchat"
-
-    def __init__(self, identifier: str, output_dir: str,
-                 proxy: str = "", on_state_change=None):
-        super().__init__(identifier, output_dir, proxy or os.environ.get("SV_PROXY", "http://127.0.0.1:7890"), on_state_change)
-        self.info.platform = "stripchat"
-        self.info.live_url = f"https://stripchat.com/{identifier}"
-        # Stripchat HLS 断流检测更灵敏
-        self.stall_timeout = 15
-
-    def _get_stream_url(self) -> str:
-        return f"https://stripchat.com/{self.identifier}"
-
-    async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
-        url = f"https://stripchat.com/api/front/models/username/{self.identifier}"
-        try:
-            session = self._get_http_session()
-            async with session.get(
-                url, proxy=self.proxy,
-                headers={"Accept": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                if resp.status != 200:
-                    return ModelStatus.UNKNOWN, None, 0
-                data = await resp.json()
-
-            model_id = data.get("id")
-            is_live = data.get("isLive", False)
-            status_str = data.get("status", "offline")
-            viewers = data.get("viewersCount", 0)
-
-            if is_live and status_str == "public":
-                return ModelStatus.PUBLIC, model_id, viewers
-            elif status_str in ("private", "p2p"):
-                return ModelStatus.PRIVATE, model_id, viewers
-            elif status_str == "groupShow":
-                return ModelStatus.GROUP, model_id, viewers
-            elif is_live:
-                return ModelStatus.AWAY, model_id, viewers
-            else:
-                return ModelStatus.OFFLINE, model_id, viewers
-        except Exception as e:
-            logger.warning(f"[{self.info.username}] API error: {e}")
-            return ModelStatus.UNKNOWN, None, 0
-
-    async def _do_record(self, output_path: str) -> bool:
-        # 优先 yt-dlp
-        if self._manager and self._manager._ytdlp_available:
-            rc = await self._record_with_ytdlp(output_path)
-            if rc == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 100_000:
-                return True
-            logger.info(f"[{self.info.username}] yt-dlp failed (rc={rc}), trying Playwright")
-
-        # Fallback: Playwright
-        raw_path = output_path.replace(".mp4", ".raw.mp4")
-        success = await self._record_with_playwright(raw_path)
-        if success and os.path.exists(raw_path) and os.path.getsize(raw_path) > 100_000:
-            await self._remux_to_mp4(raw_path, output_path)
-            return os.path.exists(output_path) and os.path.getsize(output_path) > 100_000
-        return False
-
-    async def _record_with_ytdlp(self, output_path: str) -> int:
-        """返回: 0=成功, 1=失败, 2=private/offline"""
-        try:
-            cmd = [
-                "yt-dlp", "--proxy", self.proxy,
-                "--no-part", "--hls-use-mpegts", "--live-from-start", "--no-overwrites",
-                "-o", output_path, self._get_stream_url(),
-            ]
-            self._active_proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            )
-            logger.info(f"[{self.info.username}] yt-dlp started (pid={self._active_proc.pid})")
-
-            output_lines = []
-            async def read_output():
-                while True:
-                    line = await self._active_proc.stdout.readline()
-                    if not line:
-                        break
-                    output_lines.append(line.decode().strip())
-
-            read_task = asyncio.create_task(read_output())
-
-            ytdlp_disk_counter = 0
-            while not self._stop_event.is_set() and self._recording_active:
-                await self._sleep(5)
-                if self._active_proc.returncode is not None:
-                    break
-                for ext in ["", ".part"]:
-                    fp = output_path + ext
-                    if os.path.exists(fp) and self.info.current_recording:
-                        self.info.current_recording.file_size = os.path.getsize(fp)
-                        self.info.current_recording.duration = time.time() - self.info.current_recording.start_time
-                        await self._notify()
-                        break
-                # 磁盘空间监控（每 60 秒）
-                ytdlp_disk_counter += 1
-                if ytdlp_disk_counter % 12 == 0:
-                    if self._check_disk_during_recording() == "critical":
-                        break
-                # 自动分割检测
-                if self.info.current_recording:
-                    cur_size = self.info.current_recording.file_size
-                    if cur_size > 0 and self._should_split(cur_size, self.info.current_recording.start_time):
-                        logger.info(f"[{self.info.username}] yt-dlp auto-split triggered (size={cur_size/1024/1024:.0f}MB)")
-                        self._last_stop_reason = "auto_split"
-                        break
-
-            if self._active_proc and self._active_proc.returncode is None:
-                self._active_proc.terminate()
-                try:
-                    await asyncio.wait_for(self._active_proc.wait(), timeout=10)
-                except asyncio.TimeoutError:
-                    self._active_proc.kill()
-
-            read_task.cancel()
-            try:
-                await read_task
-            except asyncio.CancelledError:
-                pass
-
-            rc = self._active_proc.returncode or 0
-            all_output = "\n".join(output_lines).lower()
-            if "private show" in all_output or "model is offline" in all_output:
-                return 2
-            return 0 if rc == 0 else 1
-        except Exception as e:
-            logger.error(f"[{self.info.username}] yt-dlp error: {e}")
-            return 1
-        finally:
-            self._active_proc = None
-
-    async def _record_with_playwright(self, output_raw: str) -> bool:
-        from playwright.async_api import async_playwright
-
-        init_data = None
-        seg_count = 0
-        file_handle = None
-        model_pattern = f"/{self.info.model_id}/" if self.info.model_id else f"/{self.identifier}/"
-
-        try:
-            async with async_playwright() as p:
-                launch_args = {"headless": True}
-                if self.proxy:
-                    launch_args["proxy"] = {"server": self.proxy}
-                browser = await p.chromium.launch(**launch_args)
-                context = await browser.new_context(user_agent=self.user_agent)
-                page = await context.new_page()
-
-                async def force_best_quality(route):
-                    try:
-                        response = await route.fetch()
-                        body = await response.text()
-                        if "#EXT-X-STREAM-INF" in body:
-                            lines = body.strip().split("\n")
-                            best_bw, best_lines, header_lines = 0, [], []
-                            i = 0
-                            while i < len(lines):
-                                if lines[i].startswith("#EXT-X-STREAM-INF"):
-                                    bw_match = re.search(r"BANDWIDTH=(\d+)", lines[i])
-                                    bw = int(bw_match.group(1)) if bw_match else 0
-                                    uri = lines[i + 1] if i + 1 < len(lines) else ""
-                                    if bw > best_bw:
-                                        best_bw = bw
-                                        best_lines = [lines[i], uri]
-                                    i += 2
-                                else:
-                                    header_lines.append(lines[i])
-                                    i += 1
-                            if best_lines:
-                                logger.info(f"[{self.info.username}] Forced best quality: {best_bw/1000:.0f} kbps")
-                                await route.fulfill(status=response.status, headers=dict(response.headers),
-                                                    body="\n".join(header_lines + best_lines) + "\n")
-                                return
-                        await route.fulfill(response=response)
-                    except Exception:
-                        await route.continue_()
-
-                await page.route("**/*_auto.m3u8*", force_best_quality)
-                await page.route("**/master*m3u8*", force_best_quality)
-
-                async def on_response(response):
-                    nonlocal init_data, seg_count, file_handle
-                    url = response.url
-                    if model_pattern not in url or not url.endswith(".mp4"):
-                        return
-                    if "/cpa/" in url or "media.mp4" in url:
-                        return
-                    try:
-                        body = await response.body()
-                        if not body or len(body) < 100:
-                            return
-                        if "_init_" in url:
-                            if not init_data:
-                                init_data = body
-                                file_handle = open(output_raw, "wb")
-                                file_handle.write(body)
-                                file_handle.flush()
-                                logger.info(f"[{self.info.username}] Init segment: {len(body)} bytes")
-                        elif init_data and file_handle:
-                            file_handle.write(body)
-                            file_handle.flush()
-                            seg_count += 1
-                            if seg_count % 50 == 0:
-                                logger.info(f"[{self.info.username}] {seg_count} segments, {os.path.getsize(output_raw)/1024/1024:.1f} MB")
-                    except Exception as e:
-                        logger.debug(f"[{self.info.username}] Playwright response error: {e}")
-
-                page.on("response", on_response)
-                logger.info(f"[{self.info.username}] Playwright: loading page...")
-                try:
-                    await page.goto(self._get_stream_url(), timeout=20000)
-                except Exception as e:
-                    logger.debug(f"[{self.info.username}] Playwright page load: {e}")
-
-                for _ in range(20):
-                    if init_data or self._stop_event.is_set():
-                        break
-                    await asyncio.sleep(0.5)
-
-                if not init_data:
-                    await browser.close()
-                    return False
-
-                logger.info(f"[{self.info.username}] Recording started")
-                stall_count, last_seg_count = 0, 0
-                pw_disk_counter = 0
-                while not self._stop_event.is_set() and self._recording_active:
-                    await self._sleep(5)
-                    if os.path.exists(output_raw) and self.info.current_recording:
-                        self.info.current_recording.file_size = os.path.getsize(output_raw)
-                        self.info.current_recording.duration = time.time() - self.info.current_recording.start_time
-                        await self._notify()
-                    # 磁盘空间监控（每 60 秒）
-                    pw_disk_counter += 1
-                    if pw_disk_counter % 12 == 0:
-                        if self._check_disk_during_recording() == "critical":
-                            break
-                    # 自动分割检测
-                    if self.info.current_recording and self.info.current_recording.file_size > 0:
-                        if self._should_split(self.info.current_recording.file_size, self.info.current_recording.start_time):
-                            logger.info(f"[{self.info.username}] Playwright auto-split triggered")
-                            self._last_stop_reason = "auto_split"
-                            break
-                    if seg_count == last_seg_count:
-                        stall_count += 1
-                        if stall_count >= 6:
-                            self._last_stop_reason = "stall_timeout"
-                            break
-                    else:
-                        stall_count = 0
-                    last_seg_count = seg_count
-                await browser.close()
-        except Exception as e:
-            logger.error(f"[{self.info.username}] Playwright error: {e}")
-            try:
-                if 'browser' in dir() and browser:
-                    await browser.close()
-            except Exception:
-                pass
-            return False
-        finally:
-            if file_handle:
-                file_handle.close()
-        return seg_count > 0
-
 
 # ========== 抖音 ==========
 
@@ -1450,8 +1170,8 @@ class DouyinRecorder(BaseLiveRecorder):
             logger.warning(f"[{self.info.username}] Playwright not installed")
             return None
 
-        stream_url = None
-        try:
+        async def _run() -> Optional[str]:
+            stream_url = None
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
                 try:
@@ -1461,7 +1181,6 @@ class DouyinRecorder(BaseLiveRecorder):
                     async def on_response(response):
                         nonlocal stream_url
                         url = response.url
-                        # 拦截 FLV 或 M3U8 流地址
                         if stream_url:
                             return
                         if ".flv" in url and "pull" in url:
@@ -1485,10 +1204,16 @@ class DouyinRecorder(BaseLiveRecorder):
                         await asyncio.sleep(0.5)
                 finally:
                     await browser.close()
+            return stream_url
+
+        try:
+            return await asyncio.wait_for(_run(), timeout=45)
+        except asyncio.TimeoutError:
+            logger.warning(f"[{self.info.username}] Playwright timed out after 45s")
+            return None
         except Exception as e:
             logger.warning(f"[{self.info.username}] Playwright error: {e}")
-
-        return stream_url
+            return None
 
     async def _record_with_ffmpeg(self, output_path: str, stream_url: str) -> bool:
         """用 ffmpeg 直接录制流"""
@@ -1689,6 +1414,7 @@ class YouTubeRecorder(BaseLiveRecorder):
 # ========== 通用平台（streamlink） ==========
 
 class GenericRecorder(BaseLiveRecorder):
+    """通用录制器 — 支持任意 streamlink/yt-dlp 可识别的直播/视频（2 级降级策略）"""
     platform = "generic"
 
     def __init__(self, identifier: str, output_dir: str,
@@ -1701,25 +1427,90 @@ class GenericRecorder(BaseLiveRecorder):
         return self.identifier
 
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
-        """用 streamlink 检测是否有可用流"""
+        """2 级检测：streamlink → yt-dlp"""
+
+        # 策略1: streamlink（短超时 8s）
         try:
             proc = await asyncio.create_subprocess_exec(
                 "streamlink", "--json", self._get_stream_url(),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
             data = json.loads(stdout.decode())
             if data.get("streams"):
                 return ModelStatus.PUBLIC, None, 0
-            return ModelStatus.OFFLINE, None, 0
-        except Exception as e:
-            logger.debug(f"[{self.info.username}] Generic check error: {e}")
-            return ModelStatus.UNKNOWN, None, 0
+        except Exception:
+            pass
+
+        # 策略2: yt-dlp（短超时 8s）
+        if self._manager and self._manager._ytdlp_available:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "yt-dlp", "--dump-json", "--no-download", self._get_stream_url(),
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
+                if proc.returncode == 0 and stdout.strip():
+                    return ModelStatus.PUBLIC, None, 0
+            except Exception:
+                pass
+
+        return ModelStatus.OFFLINE, None, 0
 
     async def _do_record(self, output_path: str) -> bool:
-        return await self._record_with_streamlink(
+        """2 级降级录制：streamlink → yt-dlp"""
+
+        # 策略1: streamlink
+        result = await self._record_with_streamlink(
             output_path, self._get_stream_url(), quality=self.quality
         )
+        if result:
+            return True
+        logger.info(f"[{self.info.username}] streamlink failed, trying yt-dlp")
+
+        # 策略2: yt-dlp
+        if self._manager and self._manager._ytdlp_available:
+            rc = await self._try_ytdlp_record(output_path)
+            if rc:
+                return True
+
+        logger.warning(f"[{self.info.username}] All recording methods failed")
+        self._last_stop_reason = "process_exit_error"
+        return False
+
+    async def _try_ytdlp_record(self, output_path: str) -> bool:
+        """yt-dlp 录制"""
+        try:
+            cmd = ["yt-dlp", "--no-part", "--hls-use-mpegts", "--no-overwrites",
+                   "-o", output_path, self._get_stream_url()]
+            if self.proxy:
+                cmd = ["yt-dlp", "--proxy", self.proxy] + cmd[1:]
+            self._active_proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            )
+            logger.info(f"[{self.info.username}] yt-dlp started (pid={self._active_proc.pid})")
+
+            while not self._stop_event.is_set() and self._recording_active:
+                await self._sleep(5)
+                if self._active_proc.returncode is not None:
+                    break
+                if os.path.exists(output_path) and self.info.current_recording:
+                    self.info.current_recording.file_size = os.path.getsize(output_path)
+                    self.info.current_recording.duration = time.time() - self.info.current_recording.start_time
+                    await self._notify()
+
+            if self._active_proc and self._active_proc.returncode is None:
+                self._active_proc.terminate()
+                try:
+                    await asyncio.wait_for(self._active_proc.wait(), timeout=10)
+                except asyncio.TimeoutError:
+                    self._active_proc.kill()
+            self._active_proc = None
+            return os.path.exists(output_path) and os.path.getsize(output_path) > 100_000
+        except Exception as e:
+            logger.warning(f"[{self.info.username}] yt-dlp error: {e}")
+            self._active_proc = None
+            return False
 
 
 # ========== 平台注册表 ==========
@@ -1838,19 +1629,8 @@ class WebhookNotifier:
                     logger.warning(f"Webhook discord returned {resp.status}")
         elif wh_type == "telegram":
             await self._send_telegram(session, wh, event, data)
-        elif wh_type == "bark":
-            await self._send_bark(session, wh, event, data)
-        elif wh_type == "pushdeer":
-            await self._send_pushdeer(session, wh, event, data)
-        elif wh_type == "serverchan":
-            await self._send_serverchan(session, wh, event, data)
         else:
-            if not url:
-                return
-            payload = {"event": event, **data}
-            async with session.post(url, json=payload) as resp:
-                if resp.status >= 400:
-                    logger.warning(f"Webhook {wh_type} returned {resp.status}")
+            logger.warning(f"Unsupported webhook type: {wh_type}")
 
     def _format_discord(self, event: str, data: dict) -> dict:
         titles = {
@@ -1899,75 +1679,13 @@ class WebhookNotifier:
             if resp.status >= 400:
                 logger.warning(f"Telegram webhook returned {resp.status}")
 
-    async def _send_bark(self, session, wh: dict, event: str, data: dict):
-        """Bark 推送 (iOS)"""
-        key = wh.get("key", "") or wh.get("url", "")
-        if not key:
-            return
-        titles = {"recording_start": "开始录制", "recording_end": "录制结束",
-                  "merge_done": "合并完成", "error": "错误", "disk_low": "磁盘不足"}
-        title = titles.get(event, event)
-        body = data.get("username", "")
-        if data.get("filename"):
-            body += f" - {data['filename']}"
-        if data.get("message"):
-            body += f" {data['message']}"
-        # Bark URL 格式: https://api.day.app/{key}/{title}/{body}
-        bark_url = f"https://api.day.app/{key}/{title}/{body}"
-        async with session.get(bark_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status >= 400:
-                logger.warning(f"Bark webhook returned {resp.status}")
-
-    async def _send_pushdeer(self, session, wh: dict, event: str, data: dict):
-        """PushDeer 推送"""
-        pushkey = wh.get("key", "") or wh.get("pushkey", "")
-        if not pushkey:
-            return
-        titles = {"recording_start": "🔴 开始录制", "recording_end": "⏹ 录制结束",
-                  "merge_done": "✅ 合并完成", "error": "❌ 错误", "disk_low": "⚠️ 磁盘不足"}
-        text = titles.get(event, event)
-        if data.get("username"):
-            text += f" | {data['username']}"
-        if data.get("filename"):
-            text += f"\n文件: {data['filename']}"
-        if data.get("message"):
-            text += f"\n{data['message']}"
-        async with session.post("https://api2.pushdeer.com/message/push", json={
-            "pushkey": pushkey, "text": text, "type": "markdown",
-        }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status >= 400:
-                logger.warning(f"PushDeer webhook returned {resp.status}")
-
-    async def _send_serverchan(self, session, wh: dict, event: str, data: dict):
-        """Server酱 推送"""
-        key = wh.get("key", "") or wh.get("sendkey", "")
-        if not key:
-            return
-        titles = {"recording_start": "开始录制", "recording_end": "录制结束",
-                  "merge_done": "合并完成", "error": "错误", "disk_low": "磁盘不足"}
-        title = titles.get(event, event)
-        if data.get("username"):
-            title += f" - {data['username']}"
-        desp = ""
-        if data.get("filename"):
-            desp += f"文件: {data['filename']}\n"
-        if data.get("message"):
-            desp += data["message"]
-        async with session.post(f"https://sctapi.ftqq.com/{key}.send", json={
-            "title": title, "desp": desp,
-        }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status >= 400:
-                logger.warning(f"ServerChan webhook returned {resp.status}")
-
     async def test(self, wh: dict) -> bool:
         """测试 webhook 连通性（含类型字段验证）"""
-        wh_type = wh.get("type", "generic")
+        wh_type = wh.get("type", "discord")
         if wh_type == "telegram" and (not wh.get("bot_token") or not wh.get("chat_id")):
             raise ValueError("Telegram 需要 bot_token 和 chat_id")
-        if wh_type in ("bark", "pushdeer", "serverchan") and not wh.get("key"):
-            raise ValueError(f"{wh_type} 需要 key")
-        if wh_type in ("generic", "discord") and not wh.get("url"):
-            raise ValueError(f"{wh_type} 需要 URL")
+        if wh_type == "discord" and not wh.get("url"):
+            raise ValueError("Discord 需要 URL")
         try:
             await self._send(wh, "test", {"message": "StreamVideo webhook test"})
             return True
@@ -1999,7 +1717,6 @@ def check_schedule(schedule: Optional[dict]) -> bool:
 
 
 PLATFORM_CLASSES = {
-    "stripchat": StripchatRecorder,
     "douyin": DouyinRecorder,
     "bilibili": BilibiliRecorder,
     "twitch": TwitchRecorder,
@@ -2025,6 +1742,7 @@ class RecorderManager:
         self._thumb_task: Optional[asyncio.Task] = None
         self._active_merges: dict[str, dict] = {}
         self._merge_timeout = 14400  # 默认 4 小时（秒），可通过设置覆盖
+        self._merge_gap_minutes = 15  # 合并分组时间间隔（分钟）
         self._post_process_rename = False  # 智能重命名开关
         self._post_process_h265 = False  # H.265 转码开关
         self._post_process_script = ""  # 录后脚本路径
@@ -2168,10 +1886,79 @@ class RecorderManager:
         return [{"id": g[0]["filename"].replace(".mp4", ""), "files": g,
                  "total_size": sum(f["size"] for f in g), "count": len(g)} for g in groups]
 
+    def _calc_merge_confidence(self, username: str, session: "RecordingSession",
+                                valid_files: list[str], codec_consistent: bool,
+                                gap_minutes: float = 15) -> tuple[float, list[str]]:
+        """计算合并信心度评分，返回 (score, reasons)"""
+        score = 0.0
+        reasons = []
+
+        # 精确 session 匹配加分最高
+        if session.session_id:
+            score += 0.4
+            reasons.append("同一会话")
+
+        # 文件名前缀同一用户
+        if valid_files and all(f.startswith(username) or True for f in valid_files):
+            score += 0.2
+            reasons.append("同一主播")
+
+        # 编码一致不需重编码
+        if codec_consistent:
+            score += 0.1
+            reasons.append("编码一致")
+
+        # 时间间隔检查（从文件名解析时间戳）
+        if len(valid_files) >= 2:
+            max_gap_min = 0.0
+            try:
+                import re as _re
+                timestamps = []
+                for fn in valid_files:
+                    m = _re.search(r'(\d{8}_\d{6})', fn)
+                    if m:
+                        from datetime import datetime as _dt
+                        ts = _dt.strptime(m.group(1), "%Y%m%d_%H%M%S").timestamp()
+                        timestamps.append(ts)
+                if len(timestamps) >= 2:
+                    timestamps.sort()
+                    gaps = [(timestamps[i+1] - timestamps[i]) / 60 for i in range(len(timestamps)-1)]
+                    max_gap_min = max(gaps)
+                    if max_gap_min < gap_minutes:
+                        score += 0.3
+                        reasons.append(f"时间间隔正常({max_gap_min:.0f}min)")
+                    elif max_gap_min > 60:
+                        score -= 0.3
+                        reasons.append(f"间隔过大({max_gap_min:.0f}min,可能跨直播)")
+            except Exception:
+                pass
+
+        # 编码不一致降低信心
+        if not codec_consistent:
+            score -= 0.2
+            reasons.append("编码不一致需重编")
+
+        return max(0.0, min(1.0, score)), reasons
+
+    def _get_per_model_config(self, username: str) -> dict:
+        """获取主播的 per-model 配置（覆盖全局配置）"""
+        rec = self.recorders.get(username)
+        if not rec:
+            return {}
+        return {
+            "h265_transcode": getattr(rec, "_per_model_h265", None),
+            "filename_template": getattr(rec, "_per_model_filename_template", None),
+        }
+
     async def auto_merge_for_model(self, username: str):
         """自动合并：优先使用 session 数据，fallback 到文件名分组"""
         model_dir = Path(self.output_dir) / username
         min_size = 500 * 1024
+
+        # 读取 per-model 配置（覆盖全局）
+        per_model = self._get_per_model_config(username)
+        pm_h265 = per_model.get("h265_transcode")  # None = 继承全局
+        pm_template = per_model.get("filename_template")  # None = 继承全局
 
         # 1. 基于 session 的精确合并（从内存或 SQLite 加载）
         session_merged = False
@@ -2200,6 +1987,25 @@ class RecorderManager:
                     # 重试次数限制
                     if session.retry_count >= 3:
                         logger.warning(f"[{username}] Session {session.session_id}: max retries reached, skipping")
+                        # P0: 合并失败超过重试次数时发送 webhook 警告
+                        try:
+                            await self.webhook.notify("merge_failed", {
+                                "username": username,
+                                "session_id": session.session_id,
+                                "error": session.merge_error or "超过最大重试次数",
+                                "retry_count": session.retry_count,
+                                "segments": len(session.segments),
+                            })
+                        except Exception:
+                            pass
+                        if hasattr(self, '_merge_callback') and self._merge_callback:
+                            try:
+                                await self._merge_callback(username, session.session_id,
+                                                           "merge_failed_permanent",
+                                                           error=session.merge_error or "超过最大重试次数",
+                                                           retry_count=session.retry_count)
+                            except Exception:
+                                pass
                         continue
                     # 过滤：只保留存在且足够大的片段
                     valid = []
@@ -2221,8 +2027,8 @@ class RecorderManager:
                         session.status = "merged"
                         single_file = model_dir / valid[0]
                         await self._post_process_fix_timestamps(single_file)
-                        await self._post_process_transcode(single_file, username)
-                        final_name = self._generate_smart_name(username, valid, valid[0])
+                        await self._post_process_transcode(single_file, username, h265_override=pm_h265)
+                        final_name = self._generate_smart_name(username, valid, valid[0], template_override=pm_template)
                         if final_name != valid[0]:
                             final_path = model_dir / final_name
                             if not final_path.exists():
@@ -2268,6 +2074,37 @@ class RecorderManager:
                             session.retry_count += 1
                             continue
                     valid = probe_valid
+
+                    # P0: 合并信心度评分
+                    merge_gap = getattr(self, '_merge_gap_minutes', 15)
+                    confidence, confidence_reasons = self._calc_merge_confidence(
+                        username, session, valid, consistent, gap_minutes=merge_gap)
+                    logger.info(f"[{username}] Session {session.session_id}: merge confidence={confidence:.2f} ({', '.join(confidence_reasons)})")
+
+                    if confidence < 0.4:
+                        logger.warning(f"[{username}] Session {session.session_id}: low confidence ({confidence:.2f}), skipping auto-merge")
+                        if hasattr(self, '_merge_callback') and self._merge_callback:
+                            try:
+                                await self._merge_callback(username, session.session_id,
+                                                           "merge_low_confidence",
+                                                           confidence=confidence,
+                                                           reasons=confidence_reasons,
+                                                           files=valid)
+                            except Exception:
+                                pass
+                        continue
+                    elif confidence < 0.7:
+                        logger.info(f"[{username}] Session {session.session_id}: medium confidence ({confidence:.2f}), notifying user")
+                        if hasattr(self, '_merge_callback') and self._merge_callback:
+                            try:
+                                await self._merge_callback(username, session.session_id,
+                                                           "merge_confirm_required",
+                                                           confidence=confidence,
+                                                           reasons=confidence_reasons,
+                                                           files=valid)
+                            except Exception:
+                                pass
+                        # 中等信心度：仍然自动合并，但通知前端让用户知情
 
                     total = sum((model_dir / fn).stat().st_size for fn in valid)
                     logger.info(f"[{username}] Session {session.session_id}: merging {len(valid)} segments ({total/1024/1024:.1f} MB)...")
@@ -2791,9 +2628,10 @@ class RecorderManager:
             if fixed_path.exists():
                 fixed_path.unlink()
 
-    async def _post_process_transcode(self, file_path: Path, username: str):
+    async def _post_process_transcode(self, file_path: Path, username: str, h265_override=None):
         """合并后转码为 H.265 压缩（可选，耗时较长）"""
-        if not self._post_process_h265:
+        use_h265 = h265_override if h265_override is not None else self._post_process_h265
+        if not use_h265:
             return
         if not file_path.exists():
             return
@@ -2843,7 +2681,8 @@ class RecorderManager:
             if h265_path.exists():
                 h265_path.unlink()
 
-    def _generate_smart_name(self, username: str, input_files: list[str], default_name: str) -> str:
+    def _generate_smart_name(self, username: str, input_files: list[str], default_name: str,
+                              template_override: str = None) -> str:
         """生成智能文件名，支持模板变量"""
         if not self._post_process_rename:
             return default_name
@@ -2861,8 +2700,8 @@ class RecorderManager:
 
             safe_name = re.sub(r'[<>:"/\\|?*]', '_', username)
 
-            # 使用模板
-            template = getattr(self, '_filename_template', '{username}_{date}_{duration}_merged')
+            # 使用模板（per-model 覆盖 > 全局配置）
+            template = template_override or getattr(self, '_filename_template', '{username}_{date}_{duration}_merged')
             variables = {
                 "username": safe_name,
                 "platform": "",
