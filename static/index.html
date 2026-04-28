@@ -442,15 +442,21 @@ document.addEventListener('DOMContentLoaded',()=>{
 </div>
 <!-- Per-streamer breakdown -->
 <div class="bg-surface-container rounded-xl border border-outline-variant/10 mb-6">
-  <div class="px-5 py-3 border-b border-outline-variant/10 flex items-center justify-between">
-    <h3 class="text-sm font-bold">按主播存储占用</h3>
-    <button class="text-xs text-primary font-medium hover:underline" @click="fetchStorageBreakdown()">刷新</button>
+  <div class="px-5 py-3 border-b border-outline-variant/10 flex items-center justify-between gap-3">
+    <h3 class="text-sm font-bold shrink-0">按主播存储占用</h3>
+    <div class="flex items-center gap-2 flex-1 max-w-xs">
+      <div class="relative flex-1">
+        <span class="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-on-surface-variant pointer-events-none">search</span>
+        <input type="text" class="w-full bg-surface-container-high border-none text-xs rounded-lg pl-8 pr-3 py-1.5 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="搜索主播..." x-model="storageSearch"/>
+      </div>
+      <button class="text-xs text-primary font-medium hover:underline shrink-0" @click="fetchStorageBreakdown()">刷新</button>
+    </div>
   </div>
   <template x-if="storageBreakdown.length === 0">
     <p class="px-5 py-8 text-center text-on-surface-variant text-sm">暂无录制数据</p>
   </template>
   <div class="divide-y divide-outline-variant/5">
-    <template x-for="item in storageBreakdown" :key="item.username">
+    <template x-for="item in storageBreakdown.filter(i => !storageSearch || i.username.toLowerCase().includes(storageSearch.toLowerCase()))" :key="item.username">
       <div class="px-5 py-3 hover:bg-surface-container-high/50 transition-colors">
         <div class="flex items-center justify-between mb-1.5">
           <div class="flex items-center gap-2">
@@ -1655,9 +1661,11 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 <!-- ===== TOAST ===== -->
 <div x-show="toast" x-cloak x-transition
-  class="fixed bottom-6 right-6 z-[200] flex items-center gap-4 bg-surface-container-highest px-6 py-4 rounded-xl border border-outline-variant/20 shadow-2xl backdrop-blur-xl">
-  <div class="w-10 h-10 bg-[#00b894]/20 rounded-full flex items-center justify-center text-[#00b894]">
-    <span class="material-symbols-outlined mso-fill">check_circle</span>
+  class="fixed bottom-6 right-6 z-[200] flex items-center gap-4 bg-surface-container-highest px-6 py-4 rounded-xl border shadow-2xl backdrop-blur-xl"
+  :class="toastType==='error'?'border-red-500/30':toastType==='warning'?'border-yellow-500/30':'border-outline-variant/20'">
+  <div class="w-10 h-10 rounded-full flex items-center justify-center"
+    :class="toastType==='error'?'bg-red-500/20 text-red-400':toastType==='warning'?'bg-yellow-500/20 text-yellow-400':'bg-[#00b894]/20 text-[#00b894]'">
+    <span class="material-symbols-outlined mso-fill" x-text="toastType==='error'?'error':toastType==='warning'?'warning':'check_circle'"></span>
   </div>
   <div>
     <p class="text-sm font-medium text-on-surface" x-text="toast"></p>
@@ -1676,7 +1684,7 @@ function app() {
     healthResults: [], healthLoading: false,
     modalHighlights: [], modalDetecting: false, modalDetectFile: '',
     manualClipStart: 0, manualClipEnd: 60, clipPreviewUrl: '', clipVideoDuration: 0, clipWatermark: '',
-    playingVideo: null, toast: '', toastTimer: null, ticker: null,
+    playingVideo: null, toast: '', toastType: 'success', toastTimer: null, ticker: null,
     mergeGroups: [], mergeGap: 15, activeMerges: {}, deleteAfterMerge: false, excludedFiles: [], mergePreviewResult: null, mergePreviewLoading: false,
     settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true },
     showSettings: false, diskInfo: { recordings_bytes: 0, free_bytes: 0, total_bytes: 0 }, _lastEventTs: 0,
@@ -1688,7 +1696,7 @@ function app() {
     // V2.0: 高光 + 片段
     highlightsList: [], highlightFilterUser: '', clipsList: [], clipFilterUser: '',
     showSchedule: false, scheduleUsername: '', scheduleQuality: 'best', scheduleCookies: '', scheduleStreamUrl: '', scheduleData: { enabled: false, start: '20:00', end: '02:00', days: [0,1,2,3,4,5,6] },
-    storageBreakdown: [],
+    storageBreakdown: [], storageSearch: '',
     // 分发
     showDistribute: false, distClip: null, distPlatforms: [], distPlatform: '',
     distTitle: '', distDescription: '', distTags: '',
@@ -1995,7 +2003,14 @@ function app() {
     },
 
     handleKey(e) {
-      if (e.key === 'Escape') { this.showModal = false; this.showSettings = false; this.showSchedule = false; }
+      if (e.key === 'Escape') {
+        if (this.toast) { this.toast = ''; return; }
+        if (this.showModelSettings) { this.showModelSettings = false; return; }
+        if (this.showModal) { this.showModal = false; return; }
+        if (this.showSettings) { this.showSettings = false; return; }
+        if (this.showSchedule) { this.showSchedule = false; return; }
+        if (this.showUserMenu) { this.showUserMenu = false; return; }
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'n') { e.preventDefault(); document.querySelector('.add-input')?.focus(); }
     },
     handleDrop(e) { this.dragOver = false; const t = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list'); if (t && t.startsWith('http')) { this.newModel = t; this.addModel(); } },
@@ -2595,7 +2610,16 @@ function app() {
       } catch(e) { this.showToast('设置失败'); }
     },
 
-    showToast(msg) { this.toast = msg; clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => { this.toast = ''; }, 3000); },
+    showToast(msg, type) {
+      if (!type) {
+        const lower = msg.toLowerCase();
+        type = (lower.includes('失败') || lower.includes('错误') || lower.includes('error') || lower.includes('fail')) ? 'error'
+             : (lower.includes('警告') || lower.includes('warning') || lower.includes('注意') || lower.includes('跳过')) ? 'warning'
+             : 'success';
+      }
+      this.toast = msg; this.toastType = type;
+      clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => { this.toast = ''; }, 3000);
+    },
     desktopNotify(title, body) { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body }); },
 
     sessionStatusText(s) { return {active:'录制中',ended:'待合并',merging:'合并中',merged:'已合并',error:'错误'}[s]||s; },
