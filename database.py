@@ -16,10 +16,12 @@ DB_PATH = "streamvideo.db"
 
 
 def get_db(db_path: str = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -156,6 +158,56 @@ def init_db(db_path: str = DB_PATH):
             tier TEXT DEFAULT 'free',
             expires_at REAL DEFAULT 0
         );
+
+        CREATE TABLE IF NOT EXISTS distribute_tasks (
+            task_id TEXT PRIMARY KEY,
+            clip_id TEXT,
+            username TEXT,
+            platform TEXT,
+            file_path TEXT,
+            title TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            tags TEXT DEFAULT '[]',
+            status TEXT DEFAULT 'pending',
+            remote_id TEXT DEFAULT '',
+            remote_url TEXT DEFAULT '',
+            error TEXT DEFAULT '',
+            retry_count INTEGER DEFAULT 0,
+            created_at REAL DEFAULT 0,
+            updated_at REAL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            email TEXT UNIQUE,
+            display_name TEXT DEFAULT '',
+            password_hash TEXT,
+            role TEXT DEFAULT 'user',
+            created_at REAL DEFAULT 0,
+            last_login REAL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            session_token TEXT PRIMARY KEY,
+            user_id TEXT,
+            created_at REAL DEFAULT 0,
+            expires_at REAL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS platform_credentials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            access_token TEXT DEFAULT '',
+            refresh_token TEXT DEFAULT '',
+            openid TEXT DEFAULT '',
+            display_name TEXT DEFAULT '',
+            expires_at REAL DEFAULT 0,
+            created_at REAL DEFAULT (strftime('%s','now')),
+            updated_at REAL DEFAULT (strftime('%s','now')),
+            UNIQUE(user_id, platform)
+        );
+        CREATE INDEX IF NOT EXISTS idx_credentials_user_platform ON platform_credentials(user_id, platform);
     """)
     conn.commit()
     conn.close()
@@ -200,6 +252,19 @@ class Database:
                     if col not in clip_cols:
                         conn.execute(f"ALTER TABLE clips ADD COLUMN {col} {typedef}")
                         logger.info(f"Schema migration: added clips.{col}")
+            # users 表迁移（Stripe 支付字段）
+            user_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+            if user_cols:
+                user_migrations = [
+                    ("stripe_customer_id", "TEXT DEFAULT ''"),
+                    ("stripe_subscription_id", "TEXT DEFAULT ''"),
+                    ("subscription_status", "TEXT DEFAULT 'free'"),
+                    ("subscription_expires_at", "REAL DEFAULT 0"),
+                ]
+                for col, typedef in user_migrations:
+                    if col not in user_cols:
+                        conn.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
+                        logger.info(f"Schema migration: added users.{col}")
             conn.commit()
         except Exception as e:
             logger.warning(f"Schema migration error: {e}")
@@ -815,6 +880,78 @@ class Database:
         finally:
             conn.close()
 
+    # ========== Distribute Tasks ==========
+
+    def upsert_distribute_task(self, task: dict):
+        conn = self._conn()
+        try:
+            tags = json.dumps(task.get("tags", []), ensure_ascii=False) if isinstance(task.get("tags"), list) else task.get("tags", "[]")
+            conn.execute("""
+                INSERT INTO distribute_tasks (task_id, clip_id, username, platform, file_path,
+                    title, description, tags, status, remote_id, remote_url, error,
+                    retry_count, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
+                    status=excluded.status, remote_id=excluded.remote_id,
+                    remote_url=excluded.remote_url, error=excluded.error,
+                    retry_count=excluded.retry_count, updated_at=excluded.updated_at
+            """, (task["task_id"], task.get("clip_id", ""), task.get("username", ""),
+                  task.get("platform", ""), task.get("file_path", ""),
+                  task.get("title", ""), task.get("description", ""), tags,
+                  task.get("status", "pending"), task.get("remote_id", ""),
+                  task.get("remote_url", ""), task.get("error", ""),
+                  task.get("retry_count", 0), task.get("created_at", 0),
+                  task.get("updated_at", 0)))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_distribute_tasks(self, username: str = "", platform: str = "", limit: int = 50) -> list[dict]:
+        conn = self._conn()
+        try:
+            sql = "SELECT * FROM distribute_tasks WHERE 1=1"
+            params = []
+            if username:
+                sql += " AND username = ?"
+                params.append(username)
+            if platform:
+                sql += " AND platform = ?"
+                params.append(platform)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+            cols = [d[0] for d in conn.execute("SELECT * FROM distribute_tasks LIMIT 0").description]
+            result = []
+            for row in rows:
+                d = dict(zip(cols, row))
+                try:
+                    d["tags"] = json.loads(d.get("tags", "[]"))
+                except Exception:
+                    d["tags"] = []
+                result.append(d)
+            return result
+        finally:
+            conn.close()
+
+    def get_distribute_task(self, task_id: str) -> Optional[dict]:
+        conn = self._conn()
+        try:
+            row = conn.execute("SELECT * FROM distribute_tasks WHERE task_id = ?", (task_id,)).fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in conn.execute("SELECT * FROM distribute_tasks LIMIT 0").description]
+            d = dict(zip(cols, row))
+            try:
+                d["tags"] = json.loads(d.get("tags", "[]"))
+            except Exception:
+                d["tags"] = []
+            return d
+        finally:
+            conn.close()
+
     # ========== Migration ==========
 
     def _migrate_from_json(self):
@@ -894,5 +1031,137 @@ class Database:
             logger.info("Migration complete")
         except Exception as e:
             logger.error(f"Migration failed: {e}")
+        finally:
+            conn.close()
+
+    # ========== Platform Credentials ==========
+
+    def save_credential(self, user_id: str, platform: str, access_token: str,
+                        refresh_token: str = "", openid: str = "", display_name: str = "",
+                        expires_at: float = 0):
+        """保存或更新平台 OAuth 凭据"""
+        import time as _time
+        conn = self._conn()
+        try:
+            conn.execute("""
+                INSERT INTO platform_credentials
+                    (user_id, platform, access_token, refresh_token, openid, display_name, expires_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, platform) DO UPDATE SET
+                    access_token=excluded.access_token,
+                    refresh_token=excluded.refresh_token,
+                    openid=COALESCE(NULLIF(excluded.openid,''), openid),
+                    display_name=COALESCE(NULLIF(excluded.display_name,''), display_name),
+                    expires_at=excluded.expires_at,
+                    updated_at=excluded.updated_at
+            """, (user_id, platform, access_token, refresh_token, openid, display_name,
+                  expires_at, _time.time(), _time.time()))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_credential(self, user_id: str, platform: str) -> Optional[dict]:
+        """获取指定用户的平台凭据，不存在返回 None"""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM platform_credentials WHERE user_id=? AND platform=?",
+                (user_id, platform)
+            ).fetchone()
+            return {k: row[k] for k in row.keys()} if row else None
+        finally:
+            conn.close()
+
+    def delete_credential(self, user_id: str, platform: str):
+        """删除平台凭据"""
+        conn = self._conn()
+        try:
+            conn.execute(
+                "DELETE FROM platform_credentials WHERE user_id=? AND platform=?",
+                (user_id, platform)
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def update_stripe_info(self, user_id: str, **kwargs):
+        """更新用户 Stripe 相关字段"""
+        allowed = {"stripe_customer_id", "stripe_subscription_id", "subscription_status", "subscription_expires_at"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        set_clause = ", ".join(f"{k}=?" for k in fields)
+        conn = self._conn()
+        try:
+            conn.execute(
+                f"UPDATE users SET {set_clause} WHERE user_id=?",
+                (*fields.values(), user_id)
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_user_by_id(self, user_id: str) -> Optional[dict]:
+        """通过 user_id 获取用户信息"""
+        conn = self._conn()
+        try:
+            row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+            return {k: row[k] for k in row.keys()} if row else None
+        finally:
+            conn.close()
+
+    def get_user_by_stripe_subscription(self, subscription_id: str) -> Optional[dict]:
+        """通过 Stripe subscription_id 查找用户"""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM users WHERE stripe_subscription_id=?", (subscription_id,)
+            ).fetchone()
+            return {k: row[k] for k in row.keys()} if row else None
+        finally:
+            conn.close()
+
+    def get_user_by_stripe_customer(self, customer_id: str) -> Optional[dict]:
+        """通过 Stripe customer_id 查找用户"""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM users WHERE stripe_customer_id=?", (customer_id,)
+            ).fetchone()
+            return {k: row[k] for k in row.keys()} if row else None
+        finally:
+            conn.close()
+
+    def get_user_tier_info(self, user_id: str) -> Optional[dict]:
+        """获取用户套餐信息（user_tiers.username 存储 user_id）"""
+        conn = self._conn()
+        try:
+            row = conn.execute("SELECT * FROM user_tiers WHERE username=?", (user_id,)).fetchone()
+            return {k: row[k] for k in row.keys()} if row else None
+        finally:
+            conn.close()
+
+    def set_user_tier(self, user_id: str, tier: str):
+        """设置用户套餐"""
+        import time as _time
+        conn = self._conn()
+        try:
+            conn.execute("""
+                INSERT INTO user_tiers (username, tier, expires_at) VALUES (?, ?, 0)
+                ON CONFLICT(username) DO UPDATE SET tier=excluded.tier
+            """, (user_id, tier))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()

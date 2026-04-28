@@ -3,6 +3,10 @@
     {
       "url": "https://live.douyin.com/55948918950",
       "name": "鲁大魔"
+    },
+    {
+      "url": "https://live.douyin.com/988538476492",
+      "name": "小工蚁"
     }
   ],
   "auto_merge": true,
@@ -12,5 +16,30 @@
   "smart_rename": true,
   "h265_transcode": false,
   "cloud_upload": {},
-  "webhooks": []
+  "webhooks": [],
+  "merge_timeout_minutes": 240,
+  "session_reuse_seconds": 30,
+  "retention_days": 0,
+  "split_by_size_mb": 0,
+  "split_by_duration_minutes": 0,
+  "post_process_script": "",
+  "filename_template": "{username}_{date}_{duration}_merged",
+  "danmaku_capture": true,
+  "highlight_auto_detect": false,
+  "highlight_keywords": [
+    "上链接",
+    "秒杀",
+    "666",
+    "抢到了",
+    "买买买"
+  ],
+  "highlight_min_score": 0.6,
+  "highlight_min_duration": 15,
+  "highlight_max_duration": 60,
+  "highlight_padding_before": 5,
+  "highlight_padding_after": 3,
+  "clip_format": "vertical",
+  "clip_resolution": "1080x1920",
+  "clip_watermark": "",
+  "clip_danmaku_overlay": true
 }

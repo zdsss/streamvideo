@@ -1,6 +1,6 @@
 """
 高光检测引擎 — 纯 ffmpeg 方案
-信号源：音频音量峰值 + 场景切换 + 静音边界 + 弹幕密度 + 弹幕关键词
+信号源：音频音量峰值 + 场景切换 + 静音边界 + 弹幕密度 + 弹幕关键词 + 礼物事件
 """
 
 import asyncio
@@ -16,10 +16,49 @@ from typing import Optional
 logger = logging.getLogger("highlight")
 
 
+# ========== 关键词库（分权重） ==========
+
+# 高权重关键词 — 强烈暗示高光时刻
+KEYWORDS_HIGH = [
+    # 电商
+    "上链接", "秒杀", "抢到了", "买买买", "拍了", "下单", "已拍",
+    "开抢", "倒计时", "3 2 1", "321", "炸了", "爆单",
+    # 游戏
+    "五杀", "四杀", "三杀", "超神", "MVP", "绝杀", "翻盘",
+    "ACE", "团灭", "carry", "逆转",
+]
+
+# 中权重关键词 — 较强互动信号
+KEYWORDS_MEDIUM = [
+    # 电商
+    "多少钱", "价格", "优惠", "便宜", "划算", "赚到了", "太值了",
+    "库存", "还有吗", "补货",
+    # 游戏
+    "666", "厉害", "牛", "秀", "太强了", "卧槽", "我靠",
+    "精彩", "好看", "漂亮",
+    # 通用
+    "哈哈哈", "笑死", "泪目", "感动", "破防",
+]
+
+# 低权重关键词 — 一般互动
+KEYWORDS_LOW = [
+    "加油", "支持", "来了", "打卡", "签到",
+]
+
+# 关键词 → 权重映射
+KEYWORD_WEIGHTS = {}
+for kw in KEYWORDS_HIGH:
+    KEYWORD_WEIGHTS[kw] = 1.0
+for kw in KEYWORDS_MEDIUM:
+    KEYWORD_WEIGHTS[kw] = 0.6
+for kw in KEYWORDS_LOW:
+    KEYWORD_WEIGHTS[kw] = 0.3
+
+
 @dataclass
 class HighlightSignal:
     """单个检测信号"""
-    type: str           # audio_peak | scene_change | silence_boundary | danmaku_peak | keyword_match
+    type: str           # audio_peak | scene_change | silence_boundary | danmaku_peak | keyword_match | gift_spike
     timestamp: float    # 秒
     strength: float     # 0.0 - 1.0
     detail: str = ""
@@ -31,7 +70,7 @@ class Highlight:
     start_time: float
     end_time: float
     score: float
-    category: str       # engagement_spike | audio_peak | keyword_trigger | scene_transition
+    category: str       # engagement_spike | audio_peak | keyword_trigger | scene_transition | gift_spike
     signals: list[dict] = field(default_factory=list)
     title: str = ""
 
@@ -46,13 +85,21 @@ class HighlightDetector:
         self.max_duration = config.get("highlight_max_duration", 60)
         self.padding_before = config.get("highlight_padding_before", 5)
         self.padding_after = config.get("highlight_padding_after", 3)
-        self.keywords = config.get("highlight_keywords", ["上链接", "秒杀", "666", "抢到了"])
+
+        # 合并用户自定义关键词和内置关键词库
+        user_keywords = config.get("highlight_keywords", [])
+        self.keyword_weights = dict(KEYWORD_WEIGHTS)
+        for kw in user_keywords:
+            if kw not in self.keyword_weights:
+                self.keyword_weights[kw] = 0.8  # 用户自定义默认中高权重
+
         self.weights = {
-            "audio_peak": 0.25,
-            "scene_change": 0.10,
-            "silence_boundary": 0.05,
-            "danmaku_peak": 0.35,
-            "keyword_match": 0.25,
+            "audio_peak": 0.20,
+            "scene_change": 0.08,
+            "silence_boundary": 0.04,
+            "danmaku_peak": 0.30,
+            "keyword_match": 0.23,
+            "gift_spike": 0.15,
         }
 
     async def detect(self, video_path: Path, danmaku_path: Optional[Path] = None) -> list[Highlight]:
@@ -69,8 +116,9 @@ class HighlightDetector:
             self._analyze_silence(video_path),
         ]
         if danmaku_path and danmaku_path.exists():
-            tasks.append(self._analyze_danmaku_density(danmaku_path))
+            tasks.append(self._analyze_danmaku_density(danmaku_path, duration))
             tasks.append(self._analyze_danmaku_keywords(danmaku_path))
+            tasks.append(self._analyze_gift_events(danmaku_path))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         signals = []
@@ -104,13 +152,12 @@ class HighlightDetector:
             return 0
 
     async def _analyze_audio_volume(self, video_path: Path, duration: float) -> list[HighlightSignal]:
-        """分析音频音量变化，找到响亮时刻。使用分段 volumedetect 方案（兼容所有 ffmpeg 版本）"""
+        """分析音频音量变化，找到响亮时刻。使用分段 volumedetect 方案"""
         signals = []
         try:
-            # 将视频按 10 秒分段，对每段计算平均音量
             segment_duration = 10
             segment_count = max(1, int(duration / segment_duration))
-            volumes = []  # (start_time, mean_volume)
+            volumes = []
 
             for i in range(segment_count):
                 start = i * segment_duration
@@ -130,7 +177,6 @@ class HighlightDetector:
             if len(volumes) < 3:
                 return signals
 
-            # 找到音量峰值段（高于均值 + 1.5 标准差）
             values = [v for _, v in volumes if v > -70]
             if len(values) < 3:
                 return signals
@@ -220,13 +266,12 @@ class HighlightDetector:
             logger.warning(f"Silence detection error: {e}")
         return signals
 
-    async def _analyze_danmaku_density(self, danmaku_path: Path) -> list[HighlightSignal]:
-        """分析弹幕密度峰值"""
+    async def _analyze_danmaku_density(self, danmaku_path: Path, video_duration: float) -> list[HighlightSignal]:
+        """分析弹幕密度峰值 — 带时间窗口平滑和动态阈值"""
         signals = []
         try:
             with open(danmaku_path, encoding="utf-8") as f:
                 data = json.load(f)
-            # 时间校正：弹幕时间戳减去视频开始偏移
             offset = data.get("video_start_offset", 0) or 0
             messages = data.get("messages", [])
             chat_msgs = [{"t": max(0, m["t"] - offset), **{k: v for k, v in m.items() if k != "t"}}
@@ -234,38 +279,62 @@ class HighlightDetector:
             if len(chat_msgs) < 5:
                 return signals
 
-            # 10 秒滑动窗口计算密度
+            # 10 秒滑动窗口，步进 5 秒（减少计算量，同时保持精度）
             window = 10
+            step = 5
             max_t = max(m["t"] for m in chat_msgs)
             densities = []
-            for t in range(0, int(max_t) + 1):
+            for t in range(0, int(max_t) + 1, step):
                 count = sum(1 for m in chat_msgs if t <= m["t"] < t + window)
                 densities.append((t, count / window))
 
-            if not densities:
+            if len(densities) < 3:
                 return signals
 
             values = [d for _, d in densities]
             mean_d = statistics.mean(values)
             std_d = statistics.stdev(values) if len(values) > 1 else 0.5
-            threshold = mean_d + 1.5 * std_d
 
-            for t, density in densities:
-                if density > threshold and density > 0.5:  # 至少 0.5 条/秒
+            # 动态阈值：短直播（<30min）用 1.2σ，长直播用 1.8σ
+            if video_duration < 1800:
+                sigma_mult = 1.2
+            elif video_duration < 7200:
+                sigma_mult = 1.5
+            else:
+                sigma_mult = 1.8
+            threshold = mean_d + sigma_mult * std_d
+
+            # 最低密度门槛：至少 0.3 条/秒（防止低活跃直播误判）
+            min_density = max(0.3, mean_d * 1.5)
+
+            # 时间窗口平滑：连续 2 个窗口都超阈值才算
+            prev_above = False
+            for i, (t, density) in enumerate(densities):
+                above = density > threshold and density > min_density
+                if above and prev_above:
                     strength = min(1.0, (density - mean_d) / (3 * std_d)) if std_d > 0 else 0.5
                     signals.append(HighlightSignal(
                         type="danmaku_peak", timestamp=float(t),
-                        strength=strength, detail=f"弹幕密度 {density:.1f}/s"
+                        strength=max(0.2, strength), detail=f"弹幕密度 {density:.1f}/s"
                     ))
+                elif above and i > 0:
+                    # 单点超阈值但特别高（>3σ），也算
+                    if density > mean_d + 3 * std_d:
+                        strength = min(1.0, (density - mean_d) / (3 * std_d)) if std_d > 0 else 0.7
+                        signals.append(HighlightSignal(
+                            type="danmaku_peak", timestamp=float(t),
+                            strength=max(0.3, strength), detail=f"弹幕爆发 {density:.1f}/s"
+                        ))
+                prev_above = above
 
         except Exception as e:
             logger.warning(f"Danmaku density analysis error: {e}")
         return signals
 
     async def _analyze_danmaku_keywords(self, danmaku_path: Path) -> list[HighlightSignal]:
-        """匹配弹幕关键词"""
+        """匹配弹幕关键词 — 分权重匹配"""
         signals = []
-        if not self.keywords:
+        if not self.keyword_weights:
             return signals
         try:
             with open(danmaku_path, encoding="utf-8") as f:
@@ -277,16 +346,63 @@ class HighlightDetector:
                 if m.get("type") != "chat":
                     continue
                 content = m.get("content", "")
-                for kw in self.keywords:
-                    if kw in content:
-                        signals.append(HighlightSignal(
-                            type="keyword_match", timestamp=max(0, m["t"] - offset),
-                            strength=0.8, detail=f"关键词「{kw}」"
-                        ))
-                        break  # 每条消息只匹配一次
+                best_kw = None
+                best_weight = 0
+                for kw, weight in self.keyword_weights.items():
+                    if kw in content and weight > best_weight:
+                        best_kw = kw
+                        best_weight = weight
+                if best_kw:
+                    signals.append(HighlightSignal(
+                        type="keyword_match",
+                        timestamp=max(0, m["t"] - offset),
+                        strength=best_weight,
+                        detail=f"关键词「{best_kw}」"
+                    ))
 
         except Exception as e:
             logger.warning(f"Danmaku keyword analysis error: {e}")
+        return signals
+
+    async def _analyze_gift_events(self, danmaku_path: Path) -> list[HighlightSignal]:
+        """分析礼物事件密度 — 礼物集中出现暗示高光"""
+        signals = []
+        try:
+            with open(danmaku_path, encoding="utf-8") as f:
+                data = json.load(f)
+            offset = data.get("video_start_offset", 0) or 0
+            messages = data.get("messages", [])
+            gift_msgs = [max(0, m["t"] - offset) for m in messages if m.get("type") == "gift"]
+
+            if len(gift_msgs) < 3:
+                return signals
+
+            # 30 秒窗口统计礼物密度
+            window = 30
+            max_t = max(gift_msgs)
+            gift_densities = []
+            for t in range(0, int(max_t) + 1, 10):
+                count = sum(1 for gt in gift_msgs if t <= gt < t + window)
+                gift_densities.append((t, count))
+
+            if not gift_densities:
+                return signals
+
+            values = [c for _, c in gift_densities]
+            mean_g = statistics.mean(values)
+            std_g = statistics.stdev(values) if len(values) > 1 else 1
+            threshold = mean_g + 2 * std_g
+
+            for t, count in gift_densities:
+                if count > threshold and count >= 3:
+                    strength = min(1.0, (count - mean_g) / (3 * std_g)) if std_g > 0 else 0.5
+                    signals.append(HighlightSignal(
+                        type="gift_spike", timestamp=float(t + window / 2),
+                        strength=max(0.3, strength), detail=f"礼物爆发 {count}个/{window}s"
+                    ))
+
+        except Exception as e:
+            logger.warning(f"Gift event analysis error: {e}")
         return signals
 
     def _score_and_merge(self, signals: list[HighlightSignal], duration: float) -> list[Highlight]:
@@ -297,17 +413,17 @@ class HighlightDetector:
         # 1. 创建 1 秒分辨率时间线
         timeline_len = int(duration) + 1
         timeline = [0.0] * timeline_len
-        signal_map = [[] for _ in range(timeline_len)]  # 每秒的信号列表
+        signal_map = [[] for _ in range(timeline_len)]
 
         for sig in signals:
             idx = int(sig.timestamp)
             if 0 <= idx < timeline_len:
                 weighted = sig.strength * self.weights.get(sig.type, 0.1)
                 # 信号影响周围 ±5 秒（高斯衰减）
-                for offset in range(-5, 6):
-                    t = idx + offset
+                for off in range(-5, 6):
+                    t = idx + off
                     if 0 <= t < timeline_len:
-                        decay = 1.0 / (1 + abs(offset) * 0.3)
+                        decay = 1.0 / (1 + abs(off) * 0.3)
                         timeline[t] += weighted * decay
                 signal_map[idx].append({
                     "type": sig.type, "strength": round(sig.strength, 2), "detail": sig.detail
@@ -318,7 +434,7 @@ class HighlightDetector:
         if max_score > 0:
             timeline = [s / max_score for s in timeline]
         else:
-            return []  # 无有效信号
+            return []
 
         # 3. 找到连续高分区域
         regions = []
@@ -337,20 +453,16 @@ class HighlightDetector:
         # 4. 应用时长约束 + padding
         highlights = []
         for start_t, end_t in regions:
-            # 添加 padding
             s = max(0, start_t - self.padding_before)
             e = min(duration, end_t + self.padding_after)
             dur = e - s
 
-            # 时长约束
             if dur < self.min_duration:
-                # 扩展到最小时长
                 center = (s + e) / 2
                 s = max(0, center - self.min_duration / 2)
                 e = min(duration, s + self.min_duration)
                 dur = e - s
             if dur > self.max_duration:
-                # 截断到最大时长（保留最高分区域）
                 region_slice = timeline[start_t:end_t + 1]
                 if region_slice:
                     peak_offset = region_slice.index(max(region_slice))
@@ -360,16 +472,13 @@ class HighlightDetector:
                 s = max(0, peak_t - self.max_duration / 2)
                 e = min(duration, s + self.max_duration)
 
-            # 计算区域平均分
             region_scores = timeline[int(s):int(e) + 1]
             avg_score = statistics.mean(region_scores) if region_scores else 0
 
-            # 收集区域内的信号
             region_signals = []
             for t in range(int(s), min(int(e) + 1, timeline_len)):
                 region_signals.extend(signal_map[t])
 
-            # 确定主要类别
             category = self._determine_category(region_signals)
 
             highlights.append(Highlight(
@@ -377,7 +486,7 @@ class HighlightDetector:
                 end_time=round(e, 1),
                 score=round(avg_score, 3),
                 category=category,
-                signals=region_signals[:20],  # 限制信号数量
+                signals=region_signals[:20],
                 title="",
             ))
 
@@ -400,7 +509,6 @@ class HighlightDetector:
         for h in highlights[1:]:
             prev = merged[-1]
             if h.start_time <= prev.end_time:
-                # 合并
                 prev.end_time = max(prev.end_time, h.end_time)
                 prev.score = max(prev.score, h.score)
                 prev.signals.extend(h.signals)
@@ -425,6 +533,7 @@ class HighlightDetector:
             "audio_peak": "audio_peak",
             "scene_change": "scene_transition",
             "silence_boundary": "scene_transition",
+            "gift_spike": "gift_spike",
         }.get(dominant, "unknown")
 
     def _auto_title(self, highlight: Highlight, index: int) -> str:
@@ -434,6 +543,7 @@ class HighlightDetector:
             "keyword_trigger": "关键词触发",
             "audio_peak": "音频高潮",
             "scene_transition": "场景切换",
+            "gift_spike": "礼物爆发",
         }
         cat = category_names.get(highlight.category, "高光")
         minutes = int(highlight.start_time // 60)
