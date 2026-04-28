@@ -45,6 +45,7 @@ def init_db(db_path: str = DB_PATH):
             quality TEXT DEFAULT 'best',
             auto_merge INTEGER DEFAULT 1,
             enabled INTEGER DEFAULT 1,
+            priority INTEGER DEFAULT 5,
             last_online REAL DEFAULT 0,
             total_recordings INTEGER DEFAULT 0,
             created_at REAL DEFAULT (strftime('%s','now'))
@@ -193,6 +194,19 @@ def init_db(db_path: str = DB_PATH):
             created_at REAL DEFAULT 0,
             expires_at REAL DEFAULT 0
         );
+
+        CREATE TABLE IF NOT EXISTS merge_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL UNIQUE,
+            username TEXT NOT NULL,
+            segments TEXT DEFAULT '[]',
+            confidence REAL DEFAULT 0,
+            reasons TEXT DEFAULT '[]',
+            status TEXT DEFAULT 'pending',
+            created_at REAL DEFAULT (strftime('%s','now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_merge_queue_username ON merge_queue(username);
+        CREATE INDEX IF NOT EXISTS idx_merge_queue_status ON merge_queue(status);
 
         CREATE TABLE IF NOT EXISTS platform_credentials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1163,5 +1177,81 @@ class Database:
         except Exception:
             conn.rollback()
             raise
+        finally:
+            conn.close()
+
+    # ========== Merge Queue ==========
+
+    def upsert_merge_queue(self, session_id: str, username: str,
+                           segments: list, confidence: float, reasons: list):
+        conn = self._conn()
+        try:
+            conn.execute("""
+                INSERT INTO merge_queue (session_id, username, segments, confidence, reasons, status)
+                VALUES (?, ?, ?, ?, ?, 'pending')
+                ON CONFLICT(session_id) DO UPDATE SET
+                    segments=excluded.segments,
+                    confidence=excluded.confidence,
+                    reasons=excluded.reasons,
+                    status='pending',
+                    created_at=strftime('%s','now')
+            """, (session_id, username, json.dumps(segments), confidence, json.dumps(reasons)))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_merge_queue(self, status: str = "pending") -> list[dict]:
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM merge_queue WHERE status=? ORDER BY created_at DESC",
+                (status,)
+            ).fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["segments"] = json.loads(d["segments"]) if d["segments"] else []
+                d["reasons"] = json.loads(d["reasons"]) if d["reasons"] else []
+                result.append(d)
+            return result
+        finally:
+            conn.close()
+
+    def update_merge_queue_status(self, session_id: str, status: str):
+        conn = self._conn()
+        try:
+            conn.execute(
+                "UPDATE merge_queue SET status=? WHERE session_id=?",
+                (status, session_id)
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def count_merge_queue(self) -> int:
+        conn = self._conn()
+        try:
+            return conn.execute(
+                "SELECT COUNT(*) FROM merge_queue WHERE status='pending'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+    def cleanup_expired_merge_queue(self, days: int = 7) -> int:
+        cutoff = time.time() - days * 86400
+        conn = self._conn()
+        try:
+            cur = conn.execute(
+                "DELETE FROM merge_queue WHERE status='pending' AND created_at < ?",
+                (cutoff,)
+            )
+            conn.commit()
+            return cur.rowcount
         finally:
             conn.close()

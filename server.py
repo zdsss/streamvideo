@@ -20,6 +20,7 @@ from typing import Optional
 
 from recorder import ModelInfo, RecorderManager, RecordingSession, RecordingState
 from database import Database
+from task_queue import task_queue, Priority
 
 
 def _safe_username(username: str) -> bool:
@@ -326,6 +327,10 @@ async def lifespan(app: FastAPI):
 
     # 过期 session 定期清理（每小时）
     asyncio.create_task(_session_cleanup_loop())
+    # 磁盘空间定时检查（每 5 分钟）
+    asyncio.create_task(_disk_check_loop())
+    # 启动任务队列
+    task_queue.start()
 
     yield
 
@@ -426,6 +431,40 @@ async def _session_cleanup_loop():
             AuthManager(db).cleanup_expired_sessions()
         except Exception as e:
             logger.error(f"Session cleanup error: {e}")
+        try:
+            cleaned = db.cleanup_expired_merge_queue(days=7)
+            if cleaned > 0:
+                logger.info(f"Cleaned {cleaned} expired merge_queue entries")
+        except Exception as e:
+            logger.error(f"Merge queue cleanup error: {e}")
+
+
+async def _disk_check_loop():
+    """每 5 分钟检查磁盘空间，推送告警"""
+    import shutil as _shutil
+    _last_level = "ok"
+    while True:
+        await asyncio.sleep(300)
+        try:
+            free = _shutil.disk_usage(RECORDINGS_DIR).free
+            free_mb = int(free / 1024 / 1024)
+            if free < 500 * 1024 * 1024:
+                level = "critical"
+            elif free < 5 * 1024 * 1024 * 1024:
+                level = "error"
+            elif free < 10 * 1024 * 1024 * 1024:
+                level = "warning"
+            else:
+                level = "ok"
+            if level != "ok" and level != _last_level:
+                await broadcast({"type": "disk_warning", "data": {
+                    "free_mb": free_mb,
+                    "critical": level == "critical",
+                    "level": level,
+                }})
+            _last_level = level
+        except Exception as e:
+            logger.debug(f"Disk check error: {e}")
 
 
 async def _do_retention_cleanup(days: int):
@@ -642,6 +681,11 @@ async def websocket_endpoint(ws: WebSocket):
             "type": "init",
             "data": manager.get_all_info(),
         }, ensure_ascii=False))
+        # 发送待确认合并队列数量
+        await ws.send_text(json.dumps({
+            "type": "merge_queue_update",
+            "count": db.count_merge_queue(),
+        }))
 
         # 保持连接
         while True:
@@ -812,6 +856,114 @@ async def get_logs(limit: int = 200):
     if limit:
         entries = entries[-limit:]
     return JSONResponse(entries)
+
+
+@app.get("/api/search")
+async def search_recordings(q: str = "", date_from: str = "", date_to: str = "", min_duration: int = 0, max_duration: int = 0):
+    """全局搜索录制文件"""
+    results = []
+    rec_path = Path(RECORDINGS_DIR)
+    if not rec_path.exists():
+        return JSONResponse(results)
+
+    for user_dir in rec_path.iterdir():
+        if not user_dir.is_dir() or user_dir.name in ("thumbs", "logs"):
+            continue
+        username = user_dir.name
+        files = manager.get_recordings(username)
+
+        for f in files:
+            # 文件名匹配
+            if q and q.lower() not in f["filename"].lower():
+                continue
+            # 日期范围
+            if date_from and f["date"] < date_from:
+                continue
+            if date_to and f["date"] > date_to:
+                continue
+            # 时长范围
+            if min_duration and f.get("duration", 0) < min_duration:
+                continue
+            if max_duration and f.get("duration", 0) > max_duration:
+                continue
+
+            results.append({
+                "username": username,
+                "filename": f["filename"],
+                "size": f["size"],
+                "date": f["date"],
+                "duration": f.get("duration", 0),
+                "thumbnail_url": f.get("thumbnail_url", "")
+            })
+
+    return JSONResponse(sorted(results, key=lambda x: x["date"], reverse=True))
+
+
+@app.get("/api/storage/cleanup-suggestions")
+async def get_cleanup_suggestions(min_score: float = 0.3):
+    """智能存储清理建议"""
+    suggestions = []
+    rec_path = Path(RECORDINGS_DIR)
+    if not rec_path.exists():
+        return JSONResponse(suggestions)
+
+    now = time.time()
+    for user_dir in rec_path.iterdir():
+        if not user_dir.is_dir() or user_dir.name in ("thumbs", "logs"):
+            continue
+        username = user_dir.name
+        files = manager.get_recordings(username)
+
+        for f in files:
+            # 计算重要性评分
+            score = 0.0
+            file_path = rec_path / username / f["filename"]
+
+            # 时长因素（越长越重要）
+            duration = f.get("duration", 0)
+            if duration > 3600: score += 0.3
+            elif duration > 1800: score += 0.2
+            elif duration < 300: score -= 0.2
+
+            # 最后访问时间（越久未访问越不重要）
+            if file_path.exists():
+                days_old = (now - file_path.stat().st_atime) / 86400
+                if days_old > 90: score -= 0.3
+                elif days_old > 30: score -= 0.2
+                elif days_old < 7: score += 0.1
+
+            # 高光密度（有高光记录的更重要）
+            highlights = manager.get_highlights(username)
+            has_highlight = any(h.get("source_file") == f["filename"] for h in highlights)
+            if has_highlight: score += 0.4
+
+            # 合并文件更重要
+            if "_merged" in f["filename"]: score += 0.2
+
+            # 低于阈值的建议清理
+            if score < min_score:
+                suggestions.append({
+                    "username": username,
+                    "filename": f["filename"],
+                    "size": f["size"],
+                    "date": f["date"],
+                    "duration": duration,
+                    "score": round(score, 2),
+                    "reason": _get_cleanup_reason(score, duration, days_old if file_path.exists() else 0, has_highlight)
+                })
+
+    return JSONResponse(sorted(suggestions, key=lambda x: x["score"]))
+
+
+def _get_cleanup_reason(score: float, duration: int, days_old: float, has_highlight: bool) -> str:
+    """生成清理建议原因"""
+    reasons = []
+    if duration < 300: reasons.append("时长过短")
+    if days_old > 90: reasons.append("超过90天未访问")
+    elif days_old > 30: reasons.append("超过30天未访问")
+    if not has_highlight: reasons.append("无高光片段")
+    if score < 0: reasons.append("综合评分过低")
+    return " · ".join(reasons) if reasons else "低价值文件"
 
 
 @app.get("/api/storage/breakdown")
@@ -1503,6 +1655,69 @@ async def get_all_merge_history(limit: int = 50):
     return JSONResponse(history)
 
 
+# ========== Merge Queue ==========
+
+
+@app.get("/api/merge-queue")
+async def get_merge_queue():
+    """获取待确认合并队列"""
+    items = db.get_merge_queue(status="pending")
+    return JSONResponse({"items": items, "count": len(items)})
+
+
+@app.post("/api/merge-queue/{session_id}/confirm")
+async def confirm_merge_queue(session_id: str):
+    """确认合并队列中的某个 session"""
+    items = db.get_merge_queue(status="pending")
+    item = next((i for i in items if i["session_id"] == session_id), None)
+    if not item:
+        return JSONResponse({"error": "未找到待确认项"}, status_code=404)
+    username = item["username"]
+    segments = item["segments"]
+    db.update_merge_queue_status(session_id, "processing")
+    try:
+        merge_id = await manager.merge_segments(username, segments, delete_originals=True)
+        db.update_merge_queue_status(session_id, "done")
+        # 更新 session 状态
+        if db:
+            db.update_session_status(session_id, "merged")
+        await broadcast({"type": "merge_queue_update", "count": db.count_merge_queue()})
+        return JSONResponse({"ok": True, "merge_id": merge_id})
+    except Exception as e:
+        db.update_merge_queue_status(session_id, "error")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/merge-queue/{session_id}/dismiss")
+async def dismiss_merge_queue(session_id: str):
+    """忽略队列中的某个合并任务"""
+    db.update_merge_queue_status(session_id, "dismissed")
+    await broadcast({"type": "merge_queue_update", "count": db.count_merge_queue()})
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/merge-queue/confirm-all")
+async def confirm_all_merge_queue():
+    """批量确认所有待合并任务"""
+    items = db.get_merge_queue(status="pending")
+    results = []
+    for item in items:
+        session_id = item["session_id"]
+        username = item["username"]
+        segments = item["segments"]
+        db.update_merge_queue_status(session_id, "processing")
+        try:
+            merge_id = await manager.merge_segments(username, segments, delete_originals=True)
+            db.update_merge_queue_status(session_id, "done")
+            db.update_session_status(session_id, "merged")
+            results.append({"session_id": session_id, "ok": True, "merge_id": merge_id})
+        except Exception as e:
+            db.update_merge_queue_status(session_id, "error")
+            results.append({"session_id": session_id, "ok": False, "error": str(e)})
+    await broadcast({"type": "merge_queue_update", "count": db.count_merge_queue()})
+    return JSONResponse({"results": results})
+
+
 # ========== Phase 2: 合并预览 / 事件缓冲 ==========
 
 
@@ -1725,6 +1940,33 @@ async def get_file_thumbnail(username: str, thumb_name: str):
         return FileResponse(str(thumb_path), media_type="image/jpeg",
                             headers={"Cache-Control": "max-age=3600"})
     return JSONResponse({"error": "not found"}, status_code=404)
+
+
+@app.post("/api/recordings/{username}/{filename}/subtitle")
+async def generate_subtitle(username: str, filename: str, req: dict = {}):
+    """为录制文件生成字幕（需要 openai-whisper）"""
+    if not _safe_username(username) or ".." in filename or "/" in filename:
+        return JSONResponse({"error": "invalid"}, status_code=400)
+    video_path = Path(RECORDINGS_DIR) / username / filename
+    if not video_path.exists():
+        return JSONResponse({"error": "文件不存在"}, status_code=404)
+    try:
+        from subtitle_gen import SubtitleGenerator, is_whisper_available
+        if not is_whisper_available():
+            return JSONResponse({"error": "Whisper 未安装，请运行: pip install openai-whisper"}, status_code=503)
+        model_size = req.get("model_size", "small")
+        fmt = req.get("format", "srt")
+        gen = SubtitleGenerator(model_size=model_size)
+        output_dir = video_path.parent
+        if fmt == "vtt":
+            sub_path = await gen.generate_vtt(video_path, output_dir)
+        else:
+            sub_path = await gen.generate_srt(video_path, output_dir)
+        if sub_path and sub_path.exists():
+            return JSONResponse({"ok": True, "subtitle_file": sub_path.name})
+        return JSONResponse({"error": "字幕生成失败"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.post("/api/post-script/test")
@@ -2744,6 +2986,42 @@ async def payment_status(user_id: str = "default"):
         return JSONResponse({"tier": "free", "status": "free", "payment_unavailable": True})
     result = pm.get_subscription_status(user_id)
     return JSONResponse(result)
+
+
+@app.get("/api/tasks")
+async def get_tasks(username: str = ""):
+    """获取任务队列状态"""
+    tasks = task_queue.get_tasks(username=username)
+    return JSONResponse({"tasks": tasks})
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task(task_id: str):
+    """获取单个任务状态"""
+    task = task_queue.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "Task not found"}, status_code=404)
+    return JSONResponse({
+        "task_id": task.task_id,
+        "name": task.name,
+        "username": task.username,
+        "priority": task.priority.name,
+        "status": task.status,
+        "progress": task.progress,
+        "error": task.error,
+        "created_at": task.created_at,
+        "started_at": task.started_at,
+        "finished_at": task.finished_at,
+    })
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str):
+    """取消待执行任务"""
+    success = task_queue.cancel(task_id)
+    if not success:
+        return JSONResponse({"error": "Cannot cancel running/finished task"}, status_code=400)
+    return JSONResponse({"success": True})
 
 
 # ========== 启动 ==========

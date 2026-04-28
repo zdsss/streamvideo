@@ -462,7 +462,7 @@ class BaseLiveRecorder:
                     asyncio.ensure_future(self._manager._disk_warning_callback(
                         self.info.username, int(free/1024/1024), True))
                 return "critical"
-            elif free < 2 * 1024 * 1024 * 1024:
+            elif free < 10 * 1024 * 1024 * 1024:
                 logger.warning(f"[{self.info.username}] Disk space low: {free/1024/1024:.0f}MB remaining")
                 if self._manager and self._manager.webhook:
                     asyncio.ensure_future(self._manager.webhook.notify("disk_low", {
@@ -1878,12 +1878,16 @@ class RecorderManager:
         model_dir = Path(self.output_dir) / username
         if not model_dir.exists():
             return []
+        thumbs_dir = model_dir / "thumbs"
         files = []
         for f in sorted(model_dir.glob("*.mp4"), reverse=True):
             if ".raw." in f.name:
                 continue
             stat = f.stat()
-            files.append({"filename": f.name, "path": str(f), "size": stat.st_size, "created": stat.st_mtime})
+            thumb_name = f"{f.stem}.jpg"
+            thumb_url = f"/api/thumb/file/{username}/{thumb_name}" if (thumbs_dir / thumb_name).exists() else ""
+            files.append({"filename": f.name, "path": str(f), "size": stat.st_size,
+                          "created": stat.st_mtime, "thumbnail_url": thumb_url})
         return files
 
     def get_grouped_recordings(self, username: str, gap_minutes: int = 15) -> list[dict]:
@@ -1929,7 +1933,7 @@ class RecorderManager:
             reasons.append("同一会话")
 
         # 文件名前缀同一用户
-        if valid_files and all(f.startswith(username) or True for f in valid_files):
+        if valid_files and all(f.startswith(username) for f in valid_files):
             score += 0.2
             reasons.append("同一主播")
 
@@ -1960,8 +1964,8 @@ class RecorderManager:
                     elif max_gap_min > 60:
                         score -= 0.3
                         reasons.append(f"间隔过大({max_gap_min:.0f}min,可能跨直播)")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[{username}] Timestamp parse failed: {e}")
 
         # 编码不一致降低信心
         if not codec_consistent:
@@ -1998,18 +2002,16 @@ class RecorderManager:
             try:
                 db_sessions = self.db.get_sessions(username)
                 sessions = [RecordingSession.from_dict(s) for s in db_sessions]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[{username}] Failed to load sessions from DB: {e}")
         if not sessions:
             sessions_path = model_dir / "sessions.json"
             if sessions_path.exists():
                 try:
                     with open(sessions_path) as f:
                         sessions = [RecordingSession.from_dict(s) for s in json.load(f)]
-                except Exception:
-                    pass
-
-        if sessions:
+                except Exception as e:
+                    logger.warning(f"[{username}] Failed to load sessions from JSON: {e}")
             try:
                 for session in sessions:
                     if session.status != "ended":
@@ -2125,6 +2127,18 @@ class RecorderManager:
                         continue
                     elif confidence < 0.7:
                         logger.info(f"[{username}] Session {session.session_id}: medium confidence ({confidence:.2f}), notifying user")
+                        # 写入待确认队列
+                        if self.db:
+                            try:
+                                self.db.upsert_merge_queue(
+                                    session_id=session.session_id,
+                                    username=username,
+                                    segments=valid,
+                                    confidence=confidence,
+                                    reasons=confidence_reasons,
+                                )
+                            except Exception as _e:
+                                logger.warning(f"[{username}] Failed to write merge_queue: {_e}")
                         if hasattr(self, '_merge_callback') and self._merge_callback:
                             try:
                                 await self._merge_callback(username, session.session_id,
@@ -2134,7 +2148,8 @@ class RecorderManager:
                                                            files=valid)
                             except Exception:
                                 pass
-                        # 中等信心度：仍然自动合并，但通知前端让用户知情
+                        # 中等信心度：写入队列等待用户确认，不自动合并
+                        continue
 
                     total = sum((model_dir / fn).stat().st_size for fn in valid)
                     logger.info(f"[{username}] Session {session.session_id}: merging {len(valid)} segments ({total/1024/1024:.1f} MB)...")
@@ -2341,6 +2356,12 @@ class RecorderManager:
         # 计算预期总大小（用于进度追踪）
         expected_size = sum((model_dir / fn).stat().st_size for fn in filenames if (model_dir / fn).exists())
 
+        # 合并前磁盘空间检查：需要至少 expected_size + 500MB 缓冲
+        disk_free = shutil.disk_usage(str(model_dir)).free
+        required = expected_size + 500 * 1024 * 1024
+        if disk_free < required:
+            raise OSError(f"磁盘空间不足：需要 {required//1024//1024}MB，剩余 {disk_free//1024//1024}MB")
+
         self._active_merges[merge_id] = {"status": "running", "progress": 0, "expected_size": expected_size}
         concat_path = model_dir / f".concat_{int(time.time())}.txt"
         merge_ok = False
@@ -2359,10 +2380,8 @@ class RecorderManager:
                 data = json.loads(stdout.decode())
                 dur = float(data.get("format", {}).get("duration", 0) or 0)
                 total_duration_us += int(dur * 1_000_000)
-            except Exception:
-                pass
-
-        # 进度监控任务
+            except Exception as e:
+                logger.debug(f"[{username}] ffprobe duration parse failed: {e}")
         progress_stop = asyncio.Event()
         merge_start_time = time.time()
         # 共享进度状态（由 ffmpeg stdout reader 更新）
@@ -2515,6 +2534,10 @@ class RecorderManager:
                 await _update_progress(0.98, "FlashCut 自动处理中...")
                 await self._auto_flashcut_pipeline(username, output_path)
 
+            # 后处理：自动生成缩略图
+            if output_path.exists():
+                asyncio.ensure_future(self._generate_file_thumbnail(output_path, username))
+
             self._active_merges[merge_id] = {
                 "status": "done", "filename": output_name, "size": result_size,
                 "progress": 1.0, "input_count": len(filenames), "input_size": expected_size,
@@ -2621,6 +2644,33 @@ class RecorderManager:
         self._active_merges[merge_id] = {"status": "cancelled", "error": "用户取消"}
         logger.info(f"Merge cancelled: {merge_id}")
         return True
+
+    async def _generate_file_thumbnail(self, file_path: Path, username: str):
+        """为录制文件生成关键帧缩略图（10% 位置）"""
+        try:
+            thumbs_dir = file_path.parent / "thumbs"
+            thumbs_dir.mkdir(parents=True, exist_ok=True)
+            thumb_name = f"{file_path.stem}.jpg"
+            thumb_path = thumbs_dir / thumb_name
+            if thumb_path.exists():
+                return
+            proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                "-of", "json", str(file_path),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            duration = float(json.loads(stdout.decode()).get("format", {}).get("duration", 0) or 0)
+            seek_time = max(1, duration * 0.1)
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y", "-ss", str(seek_time),
+                "-i", str(file_path), "-vframes", "1", "-vf", "scale=320:-1",
+                str(thumb_path),
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=30)
+        except Exception as e:
+            logger.debug(f"[{username}] Thumbnail generation failed: {e}")
 
     async def _post_process_fix_timestamps(self, file_path: Path):
         """合并后修复时间戳，确保播放器兼容"""
