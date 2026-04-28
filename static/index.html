@@ -1782,9 +1782,9 @@ function app() {
         if (r.ok) {
           const d = await r.json();
           this.mergeSavings = {
-            total_savings: d.total_savings || 0,
-            merge_count: d.merge_count || 0,
-            avg_compression: d.avg_compression || 0,
+            total_savings: d.total_savings_bytes || 0,
+            merge_count: d.total_merges || 0,
+            avg_compression: d.avg_compression_pct || 0,
           };
         }
       } catch(e) { this.mergeSavings = { total_savings: 0, merge_count: 0, avg_compression: 0 }; }

@@ -673,7 +673,7 @@ class BaseLiveRecorder:
                 else:
                     if self.info.state != RecordingState.MONITORING:
                         self._set_state(RecordingState.MONITORING)
-                    await self._sleep(self.poll_interval_offline)
+                    await self._sleep(self._smart_poll_interval())
 
             except asyncio.CancelledError:
                 break
@@ -862,6 +862,36 @@ class BaseLiveRecorder:
             await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
         except asyncio.TimeoutError:
             pass
+
+    def _smart_poll_interval(self) -> float:
+        """根据历史开播时间动态调整检测频率。
+        高概率开播时段（历史数据 >= 30% 命中）返回 poll_interval_offline（默认30s），
+        其他时段返回 300s（5分钟），节省检测开销。
+        """
+        sessions = self._sessions
+        if len(sessions) < 5:
+            return self.poll_interval_offline  # 数据不足，保持默认高频
+
+        now_hour = datetime.now().hour
+        # 统计最近 30 次 session 的开播小时分布
+        hour_counts = [0] * 24
+        for s in sessions[-30:]:
+            if s.started_at:
+                h = datetime.fromtimestamp(s.started_at).hour
+                hour_counts[h] += 1
+
+        total = sum(hour_counts)
+        if total == 0:
+            return self.poll_interval_offline
+
+        # 检查当前时间 ±1 小时窗口内的命中概率
+        window = [(now_hour - 1) % 24, now_hour, (now_hour + 1) % 24]
+        window_hits = sum(hour_counts[h] for h in window)
+        probability = window_hits / total
+
+        if probability >= 0.25:
+            return self.poll_interval_offline  # 高概率时段，高频检测
+        return 300.0  # 低概率时段，5分钟一次
 
     def _should_split(self, current_size: int, start_time: float) -> bool:
         """检查是否需要自动分割"""
