@@ -836,6 +836,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='files'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='files'">文件列表</button>
       <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='sessions'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='sessions'; loadSessions()">录制会话</button>
       <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='merge'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='merge'; loadGroups()">手动合并</button>
+      <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='history'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='history'; loadMergeHistory()">合并历史</button>
       <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='health'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='health'; loadHealthCheck()">健康检查</button>
       <button class="px-6 py-4 text-sm font-medium transition-all" :class="modalTab==='modal-highlights'?'font-bold text-primary border-b-2 border-primary':'text-on-surface-variant hover:text-on-surface'" @click="modalTab='modal-highlights'; loadModalHighlights()">高光</button>
     </div>
@@ -929,34 +930,7 @@ document.addEventListener('DOMContentLoaded',()=>{
             <button class="px-3 py-1.5 bg-gradient-to-r from-primary-container to-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="mergeAllEndedSessions()">合并所有待合并会话</button>
             <span class="text-xs text-on-surface-variant" x-text="modalSessions.filter(s=>s.status==='ended'&&s.segments.length>=2).length + ' 个待合并'"></span>
           </div>
-          <!-- Merge history toggle -->
-          <div class="flex items-center gap-3" x-show="mergeHistory.length>0">
-            <button class="text-xs text-primary font-medium hover:underline flex items-center gap-1" @click="showMergeHistory=!showMergeHistory">
-              <span class="material-symbols-outlined text-sm">history</span>
-              <span x-text="showMergeHistory?'隐藏合并历史':'查看合并历史 ('+mergeHistory.length+')'"></span>
-            </button>
-          </div>
-          <!-- Merge history panel -->
-          <template x-if="showMergeHistory && mergeHistory.length>0">
-            <div class="bg-surface-container rounded-xl border border-outline-variant/10 overflow-hidden">
-              <div class="px-4 py-2.5 border-b border-outline-variant/10 text-xs font-bold text-on-surface-variant">合并历史</div>
-              <div class="divide-y divide-outline-variant/5 max-h-48 overflow-y-auto">
-                <template x-for="h in mergeHistory" :key="h.id">
-                  <div class="px-4 py-2 flex items-center justify-between text-xs">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <span class="material-symbols-outlined text-sm" :class="h.status==='done'?'text-[#00b894]':'text-error'" x-text="h.status==='done'?'check_circle':'warning'"></span>
-                      <span class="truncate" x-text="h.output_file || '(失败)'"></span>
-                    </div>
-                    <div class="flex items-center gap-3 shrink-0 text-on-surface-variant">
-                      <span x-show="h.savings_bytes>0" class="text-[#00b894]" x-text="'节省 '+fmtSize(h.savings_bytes)"></span>
-                      <span x-text="fmtSize(h.input_size)+' → '+fmtSize(h.output_size)"></span>
-                      <span x-text="fmtDate(h.completed_at)"></span>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
+          <!-- Sessions 内已移至独立 History tab -->
           <template x-if="modalSessions.length===0">
             <p class="text-center py-12 text-on-surface-variant text-sm">暂无录制会话</p>
           </template>
@@ -1070,7 +1044,10 @@ document.addEventListener('DOMContentLoaded',()=>{
                       <span class="text-xs text-[#00b894] font-bold">已合并</span>
                     </template>
                     <template x-if="!activeMerges[group.id] || activeMerges[group.id]?.status==='error'">
-                      <button class="px-3 py-1 bg-gradient-to-r from-primary-container to-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="doMerge(group)">合并</button>
+                      <div class="flex items-center gap-2">
+                        <button class="px-2.5 py-1 bg-surface-container-highest text-xs font-bold rounded border border-outline-variant/20 hover:bg-surface-bright transition-all text-on-surface-variant" @click="showGroupPreview(group)">预览</button>
+                        <button class="px-3 py-1 bg-gradient-to-r from-primary-container to-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="doMerge(group)">合并</button>
+                      </div>
                     </template>
                   </div>
                 </div>
@@ -1086,6 +1063,88 @@ document.addEventListener('DOMContentLoaded',()=>{
                     </div>
                   </template>
                 </div>
+                <!-- 合并预览结果 -->
+                <template x-if="mergePreviewResult && mergePreviewResult.group_id === group.id">
+                  <div class="px-4 py-3 bg-primary/5 border-t border-primary/10">
+                    <template x-if="mergePreviewLoading">
+                      <div class="flex items-center gap-2 text-xs text-on-surface-variant"><span class="material-symbols-outlined anim-spin text-sm text-primary">progress_activity</span>计算预览中...</div>
+                    </template>
+                    <template x-if="!mergePreviewLoading && mergePreviewResult.error">
+                      <div class="text-xs text-error" x-text="'预览失败: '+mergePreviewResult.error"></div>
+                    </template>
+                    <template x-if="!mergePreviewLoading && !mergePreviewResult.error">
+                      <div class="space-y-1.5">
+                        <div class="text-xs font-bold text-primary">合并预览</div>
+                        <div class="grid grid-cols-3 gap-3 text-xs">
+                          <div class="flex flex-col gap-0.5">
+                            <span class="text-on-surface-variant">预计大小</span>
+                            <span x-text="fmtSize(mergePreviewResult.estimated_output_size || 0)"></span>
+                          </div>
+                          <div class="flex flex-col gap-0.5">
+                            <span class="text-on-surface-variant">总时长</span>
+                            <span x-text="mergePreviewResult.total_duration > 0 ? fmtDur(Math.floor(mergePreviewResult.total_duration)) : '-'"></span>
+                          </div>
+                          <div class="flex flex-col gap-0.5">
+                            <span class="text-on-surface-variant">有效片段</span>
+                            <span x-text="(mergePreviewResult.segment_count || 0) + ' 个'"></span>
+                          </div>
+                        </div>
+                        <div class="flex items-center gap-2 text-xs text-on-surface-variant" x-show="!mergePreviewResult.codec_consistent">
+                          <span class="material-symbols-outlined text-sm text-yellow-500">warning</span>
+                          <span>编码不一致，合并时需要重新编码（耗时较长）</span>
+                        </div>
+                        <template x-if="mergePreviewResult.warnings && mergePreviewResult.warnings.length > 0">
+                          <div class="space-y-1 mt-1">
+                            <template x-for="w in mergePreviewResult.warnings" :key="w">
+                              <div class="text-xs text-on-surface-variant flex items-center gap-1"><span class="material-symbols-outlined text-sm text-yellow-500">info</span><span x-text="w"></span></div>
+                            </template>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <!-- History Tab -->
+      <template x-if="modalTab==='history'">
+        <div class="p-6">
+          <template x-if="mergeHistory.length === 0">
+            <p class="text-center py-12 text-on-surface-variant text-sm">暂无合并历史</p>
+          </template>
+          <div class="space-y-2" x-show="mergeHistory.length > 0">
+            <template x-for="h in mergeHistory" :key="h.id">
+              <div class="bg-surface-container-high rounded-xl border border-outline-variant/10 overflow-hidden">
+                <div class="px-4 py-3 flex items-start justify-between gap-3">
+                  <div class="flex items-start gap-3 min-w-0 flex-1">
+                    <span class="material-symbols-outlined text-lg mt-0.5 flex-none" :class="h.status==='done'?'text-[#00b894]':'text-error'" x-text="h.status==='done'?'check_circle':'error'"></span>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-sm font-mono truncate font-medium" x-text="h.output_file || '(合并失败)'"></div>
+                      <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
+                        <span x-show="h.input_files && h.input_files.length" x-text="h.input_files.length + ' 个片段合并'"></span>
+                        <span x-show="h.input_size > 0" x-text="fmtSize(h.input_size) + ' → ' + fmtSize(h.output_size)"></span>
+                        <span x-show="h.savings_bytes > 0" class="text-[#00b894] font-medium" x-text="'节省 ' + fmtSize(h.savings_bytes)"></span>
+                        <span x-text="fmtDate(h.completed_at)"></span>
+                      </div>
+                      <div class="mt-1 text-xs text-error" x-show="h.error" x-text="h.error"></div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <template x-if="h.status !== 'done'">
+                      <button class="px-3 py-1 bg-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="retryMergeHistory(h)">重试</button>
+                    </template>
+                  </div>
+                </div>
+                <template x-if="h.input_files && h.input_files.length > 0">
+                  <div class="border-t border-outline-variant/10 divide-y divide-outline-variant/5">
+                    <template x-for="seg in h.input_files" :key="seg">
+                      <div class="px-4 py-1.5 text-xs text-on-surface-variant font-mono" x-text="seg"></div>
+                    </template>
+                  </div>
+                </template>
               </div>
             </template>
           </div>
@@ -1618,7 +1677,7 @@ function app() {
     modalHighlights: [], modalDetecting: false, modalDetectFile: '',
     manualClipStart: 0, manualClipEnd: 60, clipPreviewUrl: '', clipVideoDuration: 0, clipWatermark: '',
     playingVideo: null, toast: '', toastTimer: null, ticker: null,
-    mergeGroups: [], mergeGap: 15, activeMerges: {}, deleteAfterMerge: false, excludedFiles: [],
+    mergeGroups: [], mergeGap: 15, activeMerges: {}, deleteAfterMerge: false, excludedFiles: [], mergePreviewResult: null, mergePreviewLoading: false,
     settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true },
     showSettings: false, diskInfo: { recordings_bytes: 0, free_bytes: 0, total_bytes: 0 }, _lastEventTs: 0,
     // 用户认证
@@ -2443,6 +2502,43 @@ function app() {
         const r = await this._apiFetch(`/api/recordings/${username}/merge/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: files || [] }) });
         return await r.json();
       } catch(e) { return null; }
+    },
+
+    async showGroupPreview(group) {
+      const groupId = group.id;
+      // Toggle: if already showing this group's preview, close it
+      if (this.mergePreviewResult && this.mergePreviewResult.group_id === groupId && !this.mergePreviewLoading) {
+        this.mergePreviewResult = null;
+        return;
+      }
+      this.mergePreviewResult = { group_id: groupId };
+      this.mergePreviewLoading = true;
+      const files = group.files.filter(f => !this.excludedFiles.includes(f.filename)).map(f => f.filename);
+      const result = await this.mergePreview(this.modalUsername, files);
+      this.mergePreviewLoading = false;
+      if (result) {
+        this.mergePreviewResult = { ...result, group_id: groupId };
+      } else {
+        this.mergePreviewResult = { group_id: groupId, error: '请求失败' };
+      }
+    },
+
+    async loadMergeHistory() {
+      try {
+        const r = await this._apiFetch(`/api/merge-history/${this.modalUsername}`);
+        if (r.ok) this.mergeHistory = await r.json();
+        else this.mergeHistory = [];
+      } catch(e) { this.mergeHistory = []; }
+    },
+
+    async retryMergeHistory(h) {
+      if (!h.input_files || h.input_files.length === 0) { this.showToast('无法重试：缺少片段信息'); return; }
+      try {
+        const r = await this._apiFetch(`/api/recordings/${this.modalUsername}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: h.input_files, delete_originals: false }) });
+        const d = await r.json();
+        if (!r.ok) { this.showToast('重试失败: ' + (d.error || '未知错误')); }
+        else { this.showToast('已重新触发合并'); setTimeout(() => this.loadMergeHistory(), 2000); }
+      } catch(e) { this.showToast('重试请求失败'); }
     },
 
     async openSchedule(username) {
