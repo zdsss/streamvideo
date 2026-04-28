@@ -593,6 +593,29 @@ document.addEventListener('DOMContentLoaded',()=>{
             <video class="w-full max-h-64 rounded-lg" controls :src="storagePlayingVideo" @click.stop></video>
             <button class="mt-1 text-[10px] text-on-surface-variant hover:text-on-surface" @click.stop="storagePlayingVideo=null">关闭播放器</button>
           </div>
+          <!-- 批量操作工具栏 -->
+          <div x-show="!storageFilesLoading && storageFiles.length > 0" class="px-5 py-2 bg-surface-container-high border-b border-outline-variant/10 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <input type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary"
+                :checked="storageBatchMode && storageSelectedFiles.length === storageFiles.length"
+                @change="storageSelectedFiles = $event.target.checked ? storageFiles.map(f=>f.filename) : []"/>
+              <button class="px-2 py-1 text-xs font-medium rounded transition-all"
+                :class="storageBatchMode ? 'bg-primary/20 text-primary' : 'bg-surface-container-highest text-on-surface-variant hover:text-on-surface'"
+                @click="storageBatchMode = !storageBatchMode; storageSelectedFiles = []"
+                x-text="storageBatchMode ? '取消批量' : '批量操作'"></button>
+              <span x-show="storageBatchMode && storageSelectedFiles.length > 0" class="text-xs text-on-surface-variant" x-text="'已选 ' + storageSelectedFiles.length + ' 个'"></span>
+            </div>
+            <div x-show="storageBatchMode && storageSelectedFiles.length > 0" class="flex items-center gap-2">
+              <button class="px-2 py-1 bg-primary/15 text-primary text-xs font-bold rounded hover:bg-primary/25 transition-colors"
+                @click="storageBatchDownload(item.username)">
+                <span class="material-symbols-outlined text-xs mr-1">download</span>批量下载
+              </button>
+              <button class="px-2 py-1 bg-error/15 text-error text-xs font-bold rounded hover:bg-error/25 transition-colors"
+                @click="storageBatchDelete(item.username)">
+                <span class="material-symbols-outlined text-xs mr-1">delete</span>批量删除
+              </button>
+            </div>
+          </div>
           <!-- 文件列表 -->
           <div x-show="storageFilesLoading" class="flex items-center justify-center py-4 text-on-surface-variant text-xs">
             <span class="anim-spin material-symbols-outlined mr-1 text-sm">progress_activity</span>加载中...
@@ -600,6 +623,10 @@ document.addEventListener('DOMContentLoaded',()=>{
           <div x-show="!storageFilesLoading" class="divide-y divide-outline-variant/5 max-h-64 overflow-y-auto">
               <template x-for="f in storageFiles" :key="f.filename">
               <div class="flex items-center gap-2 px-5 py-2 hover:bg-surface-container/50 transition-colors">
+                <!-- 批量选择复选框 -->
+                <input x-show="storageBatchMode" type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary"
+                  :checked="storageSelectedFiles.includes(f.filename)"
+                  @change="storageSelectedFiles.includes(f.filename) ? storageSelectedFiles.splice(storageSelectedFiles.indexOf(f.filename), 1) : storageSelectedFiles.push(f.filename)"/>
                 <!-- 缩略图 -->
                 <div class="flex-shrink-0 w-12 h-8 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center cursor-pointer"
                   @click.stop="storagePlayingVideo='/api/video/'+item.username+'/'+f.filename; storagePlayingUser=item.username">
@@ -1975,6 +2002,7 @@ function app() {
     // Storage 内联文件浏览
     storageExpandedUser: null, storageFiles: [], storageFilesLoading: false,
     storagePlayingVideo: null, storagePlayingUser: null,
+    storageBatchMode: false, storageSelectedFiles: [],
     // 全局搜索
     searchQuery: '', searchResults: [], searchDebounceTimer: null,
     // 分发
@@ -2157,6 +2185,36 @@ function app() {
       }
       this.showToast(`已删除 ${deleted} 个文件`);
       this.fetchCleanupSuggestions();
+      this.fetchStorageBreakdown();
+    },
+    async storageBatchDownload(username) {
+      if (!this.storageSelectedFiles.length) return;
+      this.showToast(`开始下载 ${this.storageSelectedFiles.length} 个文件...`);
+      for (const filename of this.storageSelectedFiles) {
+        const a = document.createElement('a');
+        a.href = `/api/video/${username}/${filename}?download=1`;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        await new Promise(r => setTimeout(r, 500));
+      }
+      this.showToast('批量下载已开始');
+    },
+    async storageBatchDelete(username) {
+      if (!this.storageSelectedFiles.length) return;
+      if (!confirm(`确认删除选中的 ${this.storageSelectedFiles.length} 个文件？`)) return;
+      let deleted = 0;
+      for (const filename of this.storageSelectedFiles) {
+        try {
+          const r = await this._apiFetch(`/api/recordings/${username}/${filename}`, { method: 'DELETE' });
+          if (r.ok) deleted++;
+        } catch(e) {}
+      }
+      this.showToast(`已删除 ${deleted} 个文件`);
+      this.storageSelectedFiles = [];
+      this.storageBatchMode = false;
+      await this.loadStorageFiles(username);
       this.fetchStorageBreakdown();
     },
     async fetchHighlightRules() {
