@@ -437,3 +437,335 @@ class DanmakuCapture:
             await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
         except asyncio.TimeoutError:
             pass
+
+
+# ========== Bilibili 弹幕 ==========
+
+class BilibiliDanmakuCapture:
+    """B站直播弹幕抓取 — WebSocket 协议"""
+
+    def __init__(self, room_id: str, username: str, output_dir: Path, session_id: str = ""):
+        self.room_id = room_id
+        self.username = username
+        self.output_dir = output_dir
+        self.session_id = session_id
+        self._messages: list[DanmakuMessage] = []
+        self._task: Optional[asyncio.Task] = None
+        self._stop_event = asyncio.Event()
+        self._recording_start: float = 0
+        self._http_session: Optional[aiohttp.ClientSession] = None
+
+    async def start(self, recording_start_time: float):
+        self._recording_start = recording_start_time
+        self._stop_event.clear()
+        self._messages = []
+        self._task = asyncio.create_task(self._capture_loop())
+        logger.info(f"[{self.username}] Bilibili danmaku started for room {self.room_id}")
+
+    async def stop(self) -> Optional[Path]:
+        self._stop_event.set()
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        if self._http_session and not self._http_session.closed:
+            await self._http_session.close()
+        if not self._messages:
+            return None
+        path = self._flush_to_json()
+        logger.info(f"[{self.username}] Bilibili danmaku stopped: {len(self._messages)} messages")
+        return path
+
+    async def _capture_loop(self):
+        """B站弹幕 WebSocket 循环，断线自动重连"""
+        import struct
+        import zlib
+
+        BILI_WS_URL = "wss://broadcastlv.chat.bilibili.com/sub"
+        HEARTBEAT_INTERVAL = 30
+
+        def _pack(op: int, body: bytes) -> bytes:
+            header_len = 16
+            total_len = header_len + len(body)
+            return struct.pack(">IHHII", total_len, header_len, 1, op, 1) + body
+
+        def _unpack(data: bytes) -> list[tuple[int, bytes]]:
+            results = []
+            offset = 0
+            while offset < len(data):
+                if offset + 16 > len(data):
+                    break
+                total, header_len, _, op, _ = struct.unpack_from(">IHHII", data, offset)
+                body = data[offset + header_len: offset + total]
+                results.append((op, body))
+                offset += total
+            return results
+
+        while not self._stop_event.is_set():
+            try:
+                if not self._http_session or self._http_session.closed:
+                    self._http_session = aiohttp.ClientSession()
+
+                async with self._http_session.ws_connect(
+                    BILI_WS_URL, heartbeat=HEARTBEAT_INTERVAL
+                ) as ws:
+                    # 发送认证包
+                    auth = json.dumps({"uid": 0, "roomid": int(self.room_id), "protover": 2, "platform": "web"})
+                    await ws.send_bytes(_pack(7, auth.encode()))
+
+                    async def _heartbeat():
+                        while not self._stop_event.is_set():
+                            try:
+                                await ws.send_bytes(_pack(2, b"[object Object]"))
+                                await self._sleep(HEARTBEAT_INTERVAL)
+                            except Exception:
+                                break
+
+                    hb_task = asyncio.create_task(_heartbeat())
+                    try:
+                        async for msg in ws:
+                            if self._stop_event.is_set():
+                                break
+                            if msg.type == aiohttp.WSMsgType.BINARY:
+                                for op, body in _unpack(msg.data):
+                                    if op == 5:  # 普通消息
+                                        try:
+                                            # 尝试 zlib 解压
+                                            try:
+                                                body = zlib.decompress(body)
+                                                for op2, body2 in _unpack(body):
+                                                    if op2 == 5:
+                                                        self._handle_bili_msg(body2)
+                                            except Exception:
+                                                self._handle_bili_msg(body)
+                                        except Exception:
+                                            pass
+                                    elif op == 8:  # 认证成功
+                                        logger.debug(f"[{self.username}] Bilibili WS authenticated")
+                    finally:
+                        hb_task.cancel()
+
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.debug(f"[{self.username}] Bilibili WS error: {e}")
+                if not self._stop_event.is_set():
+                    await self._sleep(5)
+
+    def _handle_bili_msg(self, body: bytes):
+        try:
+            d = json.loads(body.decode("utf-8", errors="ignore"))
+            cmd = d.get("cmd", "")
+            ts = time.time() - self._recording_start
+            if ts < 0:
+                ts = 0
+            if cmd == "DANMU_MSG":
+                info = d.get("info", [])
+                content = info[1] if len(info) > 1 else ""
+                user = info[2][1] if len(info) > 2 and isinstance(info[2], list) else ""
+                self._messages.append(DanmakuMessage(timestamp=round(ts, 1), type="chat", user=user, content=content))
+            elif cmd in ("SEND_GIFT", "COMBO_SEND"):
+                data = d.get("data", {})
+                user = data.get("uname", "")
+                gift = data.get("giftName", "")
+                num = data.get("num", 1)
+                self._messages.append(DanmakuMessage(timestamp=round(ts, 1), type="gift", user=user,
+                                                      content=f"送出 {gift}×{num}", extra={"gift": gift, "num": num}))
+            elif cmd == "SUPER_CHAT_MESSAGE":
+                data = d.get("data", {})
+                user = data.get("user_info", {}).get("uname", "")
+                content = data.get("message", "")
+                self._messages.append(DanmakuMessage(timestamp=round(ts, 1), type="superchat", user=user, content=content))
+        except Exception:
+            pass
+
+    def _flush_to_json(self) -> Path:
+        model_dir = self.output_dir / self.username
+        model_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{self.session_id}_danmaku.json" if self.session_id else f"danmaku_{int(time.time())}.json"
+        path = model_dir / filename
+        data = {
+            "platform": "bilibili", "room_id": self.room_id, "username": self.username,
+            "session_id": self.session_id, "recording_start": self._recording_start,
+            "message_count": len(self._messages),
+            "messages": [{"t": m.timestamp, "type": m.type, "user": m.user, "content": m.content} for m in self._messages],
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+        return path
+
+    def get_stats(self) -> dict:
+        chat = sum(1 for m in self._messages if m.type == "chat")
+        gift = sum(1 for m in self._messages if m.type == "gift")
+        peak = 0.0
+        if self._messages:
+            window = 10
+            chat_msgs = [m for m in self._messages if m.type == "chat"]
+            for i, msg in enumerate(chat_msgs):
+                count = sum(1 for m in chat_msgs[i:] if m.timestamp <= msg.timestamp + window)
+                peak = max(peak, count / window)
+        return {"total": len(self._messages), "chat": chat, "gift": gift, "peak_density": round(peak, 2)}
+
+    def get_peak_density(self, window: int = 10) -> float:
+        return self.get_stats()["peak_density"]
+
+    def find_keyword_matches(self, keywords: list[str]) -> list[dict]:
+        results = []
+        for m in self._messages:
+            if m.type != "chat":
+                continue
+            for kw in keywords:
+                if kw in m.content:
+                    results.append({"timestamp": m.timestamp, "keyword": kw, "user": m.user, "content": m.content})
+                    break
+        return results
+
+    async def _sleep(self, seconds: float):
+        try:
+            await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
+        except asyncio.TimeoutError:
+            pass
+
+
+# ========== Twitch 弹幕 ==========
+
+class TwitchDanmakuCapture:
+    """Twitch IRC 弹幕抓取（匿名模式，无需 OAuth）"""
+
+    IRC_HOST = "irc.chat.twitch.tv"
+    IRC_PORT = 6667
+
+    def __init__(self, channel: str, username: str, output_dir: Path, session_id: str = ""):
+        self.channel = channel.lstrip("#").lower()
+        self.username = username
+        self.output_dir = output_dir
+        self.session_id = session_id
+        self._messages: list[DanmakuMessage] = []
+        self._task: Optional[asyncio.Task] = None
+        self._stop_event = asyncio.Event()
+        self._recording_start: float = 0
+
+    async def start(self, recording_start_time: float):
+        self._recording_start = recording_start_time
+        self._stop_event.clear()
+        self._messages = []
+        self._task = asyncio.create_task(self._capture_loop())
+        logger.info(f"[{self.username}] Twitch IRC danmaku started for #{self.channel}")
+
+    async def stop(self) -> Optional[Path]:
+        self._stop_event.set()
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        if not self._messages:
+            return None
+        path = self._flush_to_json()
+        logger.info(f"[{self.username}] Twitch danmaku stopped: {len(self._messages)} messages")
+        return path
+
+    async def _capture_loop(self):
+        while not self._stop_event.is_set():
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.IRC_HOST, self.IRC_PORT), timeout=10
+                )
+                # 匿名登录
+                writer.write(b"PASS oauth:justinfan12345\r\nNICK justinfan12345\r\n")
+                writer.write(f"JOIN #{self.channel}\r\n".encode())
+                await writer.drain()
+
+                buf = b""
+                while not self._stop_event.is_set():
+                    try:
+                        chunk = await asyncio.wait_for(reader.read(4096), timeout=60)
+                        if not chunk:
+                            break
+                        buf += chunk
+                        while b"\r\n" in buf:
+                            line, buf = buf.split(b"\r\n", 1)
+                            self._handle_irc_line(line.decode("utf-8", errors="ignore"))
+                    except asyncio.TimeoutError:
+                        # PING/PONG keepalive
+                        try:
+                            writer.write(b"PING :tmi.twitch.tv\r\n")
+                            await writer.drain()
+                        except Exception:
+                            break
+                writer.close()
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.debug(f"[{self.username}] Twitch IRC error: {e}")
+                if not self._stop_event.is_set():
+                    await self._sleep(5)
+
+    def _handle_irc_line(self, line: str):
+        # PING 响应
+        if line.startswith("PING"):
+            return
+        # PRIVMSG :user!user@user.tmi.twitch.tv PRIVMSG #channel :message
+        if "PRIVMSG" not in line:
+            return
+        try:
+            parts = line.split("PRIVMSG", 1)
+            prefix = parts[0]
+            nick = prefix.split("!")[0].lstrip(":")
+            rest = parts[1]
+            chan_msg = rest.split(":", 1)
+            if len(chan_msg) < 2:
+                return
+            content = chan_msg[1].strip()
+            ts = round(time.time() - self._recording_start, 1)
+            self._messages.append(DanmakuMessage(timestamp=max(0, ts), type="chat", user=nick, content=content))
+        except Exception:
+            pass
+
+    def _flush_to_json(self) -> Path:
+        model_dir = self.output_dir / self.username
+        model_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{self.session_id}_danmaku.json" if self.session_id else f"danmaku_{int(time.time())}.json"
+        path = model_dir / filename
+        data = {
+            "platform": "twitch", "channel": self.channel, "username": self.username,
+            "session_id": self.session_id, "recording_start": self._recording_start,
+            "message_count": len(self._messages),
+            "messages": [{"t": m.timestamp, "type": m.type, "user": m.user, "content": m.content} for m in self._messages],
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+        return path
+
+    def get_stats(self) -> dict:
+        chat = sum(1 for m in self._messages if m.type == "chat")
+        peak = 0.0
+        if self._messages:
+            window = 10
+            for i, msg in enumerate(self._messages):
+                count = sum(1 for m in self._messages[i:] if m.timestamp <= msg.timestamp + window)
+                peak = max(peak, count / window)
+        return {"total": len(self._messages), "chat": chat, "gift": 0, "peak_density": round(peak, 2)}
+
+    def get_peak_density(self, window: int = 10) -> float:
+        return self.get_stats()["peak_density"]
+
+    def find_keyword_matches(self, keywords: list[str]) -> list[dict]:
+        results = []
+        for m in self._messages:
+            if m.type != "chat":
+                continue
+            for kw in keywords:
+                if kw in m.content:
+                    results.append({"timestamp": m.timestamp, "keyword": kw, "user": m.user, "content": m.content})
+                    break
+        return results
+
+    async def _sleep(self, seconds: float):
+        try:
+            await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
+        except asyncio.TimeoutError:
+            pass

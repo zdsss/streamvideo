@@ -85,6 +85,10 @@ DEFAULT_SETTINGS = {
     "clip_resolution": "1080x1920",
     "clip_watermark": "",
     "clip_danmaku_overlay": True,
+    # 磁盘预警阈值（单位 MB）
+    "disk_warn_critical_mb": 500,
+    "disk_warn_error_mb": 5120,
+    "disk_warn_warning_mb": 10240,
 }
 
 # 运行时设置（从 config.json 加载）
@@ -448,11 +452,14 @@ async def _disk_check_loop():
         try:
             free = _shutil.disk_usage(RECORDINGS_DIR).free
             free_mb = int(free / 1024 / 1024)
-            if free < 500 * 1024 * 1024:
+            critical_mb = app_settings.get("disk_warn_critical_mb", 500)
+            error_mb = app_settings.get("disk_warn_error_mb", 5120)
+            warning_mb = app_settings.get("disk_warn_warning_mb", 10240)
+            if free_mb < critical_mb:
                 level = "critical"
-            elif free < 5 * 1024 * 1024 * 1024:
+            elif free_mb < error_mb:
                 level = "error"
-            elif free < 10 * 1024 * 1024 * 1024:
+            elif free_mb < warning_mb:
                 level = "warning"
             else:
                 level = "ok"
@@ -516,8 +523,7 @@ def apply_settings_to_recorders():
         rec.session_reuse_window = reuse_window
         rec.split_by_size = split_size * 1024 * 1024 if split_size > 0 else 0
         rec.split_by_duration = split_duration * 60 if split_duration > 0 else 0
-        if hasattr(rec, '_danmaku_enabled'):
-            rec._danmaku_enabled = app_settings.get("danmaku_capture", True)
+        rec._danmaku_enabled = app_settings.get("danmaku_capture", True)
 
 
 async def remux_stale_raw_files():
@@ -1297,6 +1303,67 @@ async def get_sessions(username: str):
     return JSONResponse(sessions)
 
 
+@app.get("/api/sessions/{username}/summary")
+async def get_sessions_summary(username: str):
+    """获取主播的会话摘要列表（用于 Storage 会话分组视图）"""
+    sessions = manager.get_sessions(username)
+    recordings = {f["filename"]: f for f in manager.get_recordings(username)}
+    model_dir = Path(RECORDINGS_DIR) / username
+
+    result = []
+    for s in sorted(sessions, key=lambda x: x.get("started_at", 0), reverse=True):
+        segments = s.get("segments", [])
+        merged_file = s.get("merged_file", "")
+        status = s.get("status", "unknown")
+
+        # 收集关联文件信息
+        files = []
+        total_size = 0
+        cover_url = ""
+        for fn in segments:
+            if fn in recordings:
+                files.append(recordings[fn])
+                total_size += recordings[fn]["size"]
+                if not cover_url and recordings[fn].get("thumbnail_url"):
+                    cover_url = recordings[fn]["thumbnail_url"]
+            elif (model_dir / fn).exists():
+                stat = (model_dir / fn).stat()
+                files.append({"filename": fn, "size": stat.st_size, "created": stat.st_mtime, "thumbnail_url": ""})
+                total_size += stat.st_size
+
+        # 合并后文件的封面
+        merged_info = recordings.get(merged_file) if merged_file else None
+        if merged_info:
+            total_size = merged_info["size"]
+            if merged_info.get("thumbnail_url"):
+                cover_url = merged_info["thumbnail_url"]
+
+        started_at = s.get("started_at", 0)
+        ended_at = s.get("ended_at", 0)
+        duration = int(ended_at - started_at) if ended_at and started_at else 0
+
+        result.append({
+            "session_id": s.get("session_id", ""),
+            "status": status,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "duration": duration,
+            "segment_count": len(segments),
+            "total_size": total_size,
+            "merged_file": merged_file,
+            "merged_info": merged_info,
+            "segments": files,
+            "merge_error": s.get("merge_error", ""),
+            "merge_type": s.get("merge_type", ""),
+            "rollback_deadline": s.get("rollback_deadline", 0),
+            "original_segments": s.get("original_segments", []),
+            "retry_count": s.get("retry_count", 0),
+            "cover_url": cover_url,
+        })
+
+    return JSONResponse(result)
+
+
 @app.post("/api/sessions/{username}/{session_id}/merge")
 async def merge_session(username: str, session_id: str):
     """手动触发指定会话的合并"""
@@ -1329,12 +1396,31 @@ async def merge_session(username: str, session_id: str):
         )
         merge_info = manager._active_merges.get(merge_id, {})
         if merge_info.get("status") == "done":
+            import time as _time
+            merged_file = merge_info.get("filename", "")
+            savings = merge_info.get("savings_bytes", 0)
             manager.update_session_status(username, session_id, "merged",
-                                          merged_file=merge_info.get("filename", ""))
+                                          merged_file=merged_file,
+                                          merge_type="manual",
+                                          rollback_deadline=_time.time() + 72 * 3600,
+                                          original_segments=list(segments))
+            await broadcast({
+                "type": "merge_done",
+                "data": {
+                    "username": username,
+                    "merge_id": merge_id,
+                    "filename": merged_file,
+                    "input_count": len(segments),
+                    "input_size": merge_info.get("input_size", 0),
+                    "savings_bytes": savings,
+                    "savings_pct": round(savings / max(merge_info.get("input_size", 1), 1) * 100, 1),
+                }
+            })
         else:
             manager.update_session_status(username, session_id, "error",
                                           merge_error=merge_info.get("error", "合并失败"))
-        return JSONResponse({"merge_id": merge_id, "status": merge_info.get("status", "unknown")})
+        return JSONResponse({"merge_id": merge_id, "status": merge_info.get("status", "unknown"),
+                             "filename": merge_info.get("filename", "")})
     except (ValueError, FileNotFoundError) as e:
         manager.update_session_status(username, session_id, "error", merge_error=str(e))
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -1718,6 +1804,61 @@ async def confirm_all_merge_queue():
     return JSONResponse({"results": results})
 
 
+@app.post("/api/sessions/{session_id}/rollback")
+async def rollback_session_merge(session_id: str):
+    """撤回自动合并：删除合并结果，恢复原始分片（72h 内有效）"""
+    import time as _time
+    sessions = db.get_sessions_by_id(session_id)
+    if not sessions:
+        return JSONResponse({"error": "Session 不存在"}, status_code=404)
+    session = sessions[0]
+    if session.get("status") != "merged":
+        return JSONResponse({"error": "Session 未处于合并状态"}, status_code=400)
+    deadline = session.get("rollback_deadline", 0)
+    if deadline and _time.time() > deadline:
+        return JSONResponse({"error": "已超过 72 小时撤回期限"}, status_code=400)
+    original_segs = session.get("original_segments", [])
+    if not original_segs:
+        return JSONResponse({"error": "无原始分片记录，无法撤回"}, status_code=400)
+
+    username = session["username"]
+    model_dir = Path(manager.output_dir) / username
+    merged_file = session.get("merged_file", "")
+
+    # 验证原始分片存在（未被删除）
+    missing = [s for s in original_segs if not (model_dir / s).exists()]
+    if missing:
+        return JSONResponse({"error": f"原始分片已不存在: {missing}"}, status_code=400)
+
+    # 删除合并结果
+    if merged_file:
+        merged_path = model_dir / merged_file
+        if merged_path.exists():
+            merged_path.unlink()
+
+    # 恢复 session 状态
+    db.update_session_status(session_id, "ended",
+                             merged_file="",
+                             merge_type="",
+                             rollback_deadline=0,
+                             segments=original_segs,
+                             original_segments=[])
+    # 同步内存中的 recorder session
+    rec = manager.recorders.get(username)
+    if rec:
+        for s in rec._sessions:
+            if s.session_id == session_id:
+                s.status = "ended"
+                s.merged_file = ""
+                s.merge_type = ""
+                s.rollback_deadline = 0
+                s.segments = list(original_segs)
+                s.original_segments = []
+                break
+    await broadcast({"type": "session_rollback", "session_id": session_id, "username": username})
+    return JSONResponse({"ok": True, "restored_segments": original_segs})
+
+
 # ========== Phase 2: 合并预览 / 事件缓冲 ==========
 
 
@@ -1800,87 +1941,7 @@ async def get_events_since(ts: float = 0):
     return JSONResponse(events)
 
 
-# ========== Phase 3: 配置导入导出 / 缩略图 / 录后脚本 ==========
-
-@app.get("/api/config/export")
-async def export_config():
-    """导出配置（设置 + 主播列表）"""
-    models = []
-    for key, rec in manager.recorders.items():
-        models.append({
-            "url": rec.info.live_url or rec.identifier,
-            "name": rec.info.username,
-            "platform": rec.info.platform,
-            "quality": rec.quality,
-            "auto_merge": rec.auto_merge,
-            "schedule": rec.schedule,
-        })
-    export_data = {
-        "version": 2,
-        "exported_at": time.time(),
-        "settings": {k: v for k, v in app_settings.items()},
-        "models": models,
-    }
-    return JSONResponse(export_data)
-
-
-@app.post("/api/config/import")
-async def import_config(req: dict):
-    """导入配置"""
-    if "settings" not in req and "models" not in req:
-        return JSONResponse({"error": "无效的配置格式"}, status_code=400)
-
-    imported_settings = 0
-    imported_models = 0
-
-    # 导入设置
-    if "settings" in req:
-        allowed = set(DEFAULT_SETTINGS.keys())
-        for k, v in req["settings"].items():
-            if k in allowed:
-                app_settings[k] = v
-                imported_settings += 1
-        apply_settings_to_recorders()
-
-    # 导入主播
-    if "models" in req:
-        for m in req["models"]:
-            url = m.get("url", "")
-            if not url:
-                continue
-            # 跳过已存在的
-            existing = False
-            for rec in manager.recorders.values():
-                if rec.info.live_url == url or rec.identifier == url:
-                    existing = True
-                    break
-            if existing:
-                continue
-            try:
-                info = manager.add_model(url)
-                key = info.username
-                rec = manager.recorders.get(key)
-                if rec:
-                    if m.get("schedule"):
-                        rec.schedule = m["schedule"]
-                    if m.get("quality"):
-                        rec.quality = m["quality"]
-                        rec.info.quality = m["quality"]
-                    if "auto_merge" in m:
-                        rec.auto_merge = m["auto_merge"]
-                        rec.info.auto_merge = m["auto_merge"]
-                await manager.start_model(key)
-                imported_models += 1
-            except Exception as e:
-                logger.warning(f"Import model failed for {url}: {e}")
-
-    save_config()
-    await broadcast({"type": "settings_update", "data": app_settings})
-    return JSONResponse({
-        "ok": True,
-        "imported_settings": imported_settings,
-        "imported_models": imported_models,
-    })
+# ========== Phase 3: 缩略图 / 录后脚本 ==========
 
 
 @app.post("/api/recordings/{username}/{filename}/thumbnail")
@@ -3022,6 +3083,115 @@ async def cancel_task(task_id: str):
     if not success:
         return JSONResponse({"error": "Cannot cancel running/finished task"}, status_code=400)
     return JSONResponse({"success": True})
+
+
+# ========== 配置导入/导出 ==========
+
+@app.get("/api/config/export")
+async def export_config():
+    """导出完整配置（settings + models + schedules）"""
+    models_data = []
+    for key, rec in manager.recorders.items():
+        m = {
+            "username": rec.info.username,
+            "url": rec.info.live_url or rec.identifier,
+            "platform": rec.info.platform,
+            "quality": rec.quality,
+            "auto_merge": rec.auto_merge,
+            "schedule": rec.schedule,
+            "split_by_size_mb": int(rec.split_by_size / 1024 / 1024) if rec.split_by_size else 0,
+            "split_by_duration_minutes": int(rec.split_by_duration / 60) if rec.split_by_duration else 0,
+            "h265_transcode": getattr(rec, "_per_model_h265", None),
+            "filename_template": getattr(rec, "_per_model_filename_template", None),
+            "custom_cookies": rec.custom_cookies or "",
+            "custom_stream_url": rec.custom_stream_url or "",
+        }
+        models_data.append(m)
+
+    payload = {
+        "version": "1.0",
+        "exported_at": time.time(),
+        "settings": {k: v for k, v in app_settings.items()},
+        "models": models_data,
+    }
+    import datetime
+    filename = f"streamvideo_config_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    content = json.dumps(payload, ensure_ascii=False, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/config/import")
+async def import_config(req: dict):
+    """导入配置（合并或覆盖）"""
+    mode = req.get("mode", "merge")  # merge | overwrite
+    data = req.get("data")
+    if not data or not isinstance(data, dict):
+        return JSONResponse({"error": "data 字段缺失或格式错误"}, status_code=400)
+
+    version = data.get("version", "")
+    if not str(version).startswith(("1.", "2")):
+        return JSONResponse({"error": f"不支持的配置版本: {version}"}, status_code=400)
+
+    imported_settings = 0
+    imported_models = 0
+    errors = []
+
+    # 导入 settings
+    settings_data = data.get("settings", {})
+    allowed = set(DEFAULT_SETTINGS.keys())
+    for k, v in settings_data.items():
+        if k in allowed:
+            app_settings[k] = v
+            imported_settings += 1
+    apply_settings_to_recorders()
+    save_config()
+
+    # 导入 models
+    models_data = data.get("models", [])
+    for m in models_data:
+        url = m.get("url", "")
+        if not url:
+            errors.append("跳过：缺少 url 字段")
+            continue
+        username = m.get("username", "")
+        if mode == "merge" and username and username in manager.recorders:
+            errors.append(f"跳过已存在主播: {username}")
+            continue
+        try:
+            info = manager.add_model(url)
+            rec = manager.recorders.get(info.username)
+            if rec:
+                rec.quality = m.get("quality", "best")
+                rec.auto_merge = m.get("auto_merge", True)
+                rec.schedule = m.get("schedule")
+                split_size = m.get("split_by_size_mb", 0)
+                split_dur = m.get("split_by_duration_minutes", 0)
+                rec.split_by_size = split_size * 1024 * 1024 if split_size else 0
+                rec.split_by_duration = split_dur * 60 if split_dur else 0
+                if m.get("h265_transcode") is not None:
+                    rec._per_model_h265 = m["h265_transcode"]
+                if m.get("filename_template"):
+                    rec._per_model_filename_template = m["filename_template"]
+                if m.get("custom_cookies"):
+                    rec.custom_cookies = m["custom_cookies"]
+                if m.get("custom_stream_url"):
+                    rec.custom_stream_url = m["custom_stream_url"]
+            imported_models += 1
+        except Exception as e:
+            errors.append(f"导入 {url} 失败: {e}")
+
+    save_config()
+    await broadcast({"type": "models_update"})
+    return JSONResponse({
+        "ok": True,
+        "imported_settings": imported_settings,
+        "imported_models": imported_models,
+        "errors": errors,
+    })
 
 
 # ========== 启动 ==========

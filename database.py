@@ -63,6 +63,9 @@ def init_db(db_path: str = DB_PATH):
             retry_count INTEGER DEFAULT 0,
             merge_started_at REAL DEFAULT 0,
             stream_end_reason TEXT DEFAULT '',
+            merge_type TEXT DEFAULT '',
+            rollback_deadline REAL DEFAULT 0,
+            original_segments TEXT DEFAULT '[]',
             FOREIGN KEY (username) REFERENCES models(username) ON DELETE CASCADE
         );
 
@@ -249,6 +252,9 @@ class Database:
                 ("retry_count", "INTEGER DEFAULT 0"),
                 ("merge_started_at", "REAL DEFAULT 0"),
                 ("stream_end_reason", "TEXT DEFAULT ''"),
+                ("merge_type", "TEXT DEFAULT ''"),
+                ("rollback_deadline", "REAL DEFAULT 0"),
+                ("original_segments", "TEXT DEFAULT '[]'"),
             ]
             for col, typedef in migrations:
                 if col not in cols:
@@ -435,6 +441,29 @@ class Database:
                 d.setdefault("retry_count", 0)
                 d.setdefault("merge_started_at", 0)
                 d.setdefault("stream_end_reason", "")
+                d.setdefault("merge_type", "")
+                d.setdefault("rollback_deadline", 0)
+                raw_orig = d.get("original_segments", "[]")
+                d["original_segments"] = json.loads(raw_orig) if raw_orig else []
+                result.append(d)
+            return result
+        finally:
+            conn.close()
+
+    def get_sessions_by_id(self, session_id: str) -> list[dict]:
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
+            ).fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["segments"] = json.loads(d["segments"]) if d["segments"] else []
+                d.setdefault("merge_type", "")
+                d.setdefault("rollback_deadline", 0)
+                raw_orig = d.get("original_segments", "[]")
+                d["original_segments"] = json.loads(raw_orig) if raw_orig else []
                 result.append(d)
             return result
         finally:
@@ -445,8 +474,9 @@ class Database:
         try:
             conn.execute("""
                 INSERT INTO sessions (session_id, username, started_at, ended_at, segments, status,
-                    merged_file, merge_error, retry_count, merge_started_at, stream_end_reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    merged_file, merge_error, retry_count, merge_started_at, stream_end_reason,
+                    merge_type, rollback_deadline, original_segments)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     ended_at=excluded.ended_at,
                     segments=excluded.segments,
@@ -455,7 +485,10 @@ class Database:
                     merge_error=excluded.merge_error,
                     retry_count=excluded.retry_count,
                     merge_started_at=excluded.merge_started_at,
-                    stream_end_reason=excluded.stream_end_reason
+                    stream_end_reason=excluded.stream_end_reason,
+                    merge_type=excluded.merge_type,
+                    rollback_deadline=excluded.rollback_deadline,
+                    original_segments=excluded.original_segments
             """, (
                 session["session_id"], session["username"],
                 session.get("started_at", 0), session.get("ended_at", 0),
@@ -466,6 +499,9 @@ class Database:
                 session.get("retry_count", 0),
                 session.get("merge_started_at", 0),
                 session.get("stream_end_reason", ""),
+                session.get("merge_type", ""),
+                session.get("rollback_deadline", 0),
+                json.dumps(session.get("original_segments", [])),
             ))
             conn.commit()
         except Exception:
@@ -480,11 +516,12 @@ class Database:
             sets = ["status = ?"]
             vals = [status]
             for k in ("merged_file", "merge_error", "ended_at", "retry_count",
-                      "merge_started_at", "stream_end_reason", "segments"):
+                      "merge_started_at", "stream_end_reason", "segments",
+                      "merge_type", "rollback_deadline", "original_segments"):
                 if k in kwargs:
                     sets.append(f"{k} = ?")
                     v = kwargs[k]
-                    vals.append(json.dumps(v) if k == "segments" else v)
+                    vals.append(json.dumps(v) if k in ("segments", "original_segments") else v)
             vals.append(session_id)
             conn.execute(f"UPDATE sessions SET {', '.join(sets)} WHERE session_id = ?", vals)
             conn.commit()

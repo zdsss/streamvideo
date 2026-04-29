@@ -66,6 +66,9 @@ class RecordingSession:
     retry_count: int = 0  # 合并失败重试计数
     merge_started_at: float = 0  # 合并开始时间（用于超时检测）
     stream_end_reason: str = ""  # 录制停止原因: stall_timeout | process_exit_0 | process_exit_error | user_stop
+    merge_type: str = ""  # auto_high | auto_smart | manual | ""
+    rollback_deadline: float = 0  # unix timestamp: 72h 内可撤回
+    original_segments: list[str] = field(default_factory=list)  # 合并前的分片列表（用于撤回）
 
     def to_dict(self) -> dict:
         return {
@@ -80,6 +83,9 @@ class RecordingSession:
             "retry_count": self.retry_count,
             "merge_started_at": self.merge_started_at,
             "stream_end_reason": self.stream_end_reason,
+            "merge_type": self.merge_type,
+            "rollback_deadline": self.rollback_deadline,
+            "original_segments": self.original_segments,
         }
 
     @staticmethod
@@ -96,6 +102,9 @@ class RecordingSession:
             retry_count=d.get("retry_count", 0),
             merge_started_at=d.get("merge_started_at", 0),
             stream_end_reason=d.get("stream_end_reason", ""),
+            merge_type=d.get("merge_type", ""),
+            rollback_deadline=d.get("rollback_deadline", 0),
+            original_segments=d.get("original_segments", []),
         )
 
 
@@ -182,6 +191,28 @@ def detect_platform(url_or_id: str) -> tuple[str, str, str]:
             return "youtube", url, f"YT_{m.group(1)}"
         return "youtube", url, "YouTube"
 
+    # 虎牙
+    if "huya.com" in url:
+        m = re.search(r'huya\.com/([^/?&#\s]+)', url)
+        room = m.group(1) if m else url.split("/")[-1].split("?")[0]
+        return "huya", url, f"虎牙_{room}"
+
+    # 斗鱼
+    if "douyu.com" in url:
+        m = re.search(r'douyu\.com/(\d+)', url)
+        room = m.group(1) if m else url.split("/")[-1].split("?")[0]
+        return "douyu", url, f"斗鱼_{room}"
+
+    # Kick
+    if "kick.com" in url:
+        m = re.search(r'kick\.com/([^/?&#\s]+)', url)
+        channel = m.group(1) if m else url.split("/")[-1].split("?")[0]
+        return "kick", url, f"Kick_{channel}"
+
+    # AfreecaTV
+    if "afreecatv.com" in url or "chzzk.naver.com" in url:
+        return "generic", url, urlparse(url).netloc.split(".")[0]
+
     # 未知平台，尝试用 streamlink
     return "generic", url, urlparse(url).netloc.split(".")[0]
 
@@ -246,6 +277,10 @@ class BaseLiveRecorder:
 
         # 磁盘保护
         self._disk_critical = False
+
+        # 弹幕抓取（默认禁用，各平台子类或 server 可覆盖）
+        self._danmaku = None
+        self._danmaku_enabled = False
 
         # 共享 HTTP 会话（避免每次请求创建新连接）
         self._http_session: Optional[aiohttp.ClientSession] = None
@@ -599,19 +634,39 @@ class BaseLiveRecorder:
                     self._last_stop_reason = ""  # 重置停止原因
                     await self._notify()
 
-                    # 启动弹幕抓取（仅抖音）
-                    if hasattr(self, '_danmaku_enabled') and self._danmaku_enabled and self.platform == "douyin":
+                    # 启动弹幕抓取（支持 Douyin / Bilibili / Twitch）
+                    if hasattr(self, '_danmaku_enabled') and self._danmaku_enabled:
                         try:
-                            from danmaku import DanmakuCapture
                             session_id = self._current_session.session_id if self._current_session else ""
-                            self._danmaku = DanmakuCapture(
-                                room_id=getattr(self, 'room_id', self.identifier),
-                                username=self.info.username,
-                                output_dir=self.output_dir,
-                                ttwid=getattr(self, '_ttwid', ''),
-                                session_id=session_id,
-                            )
-                            await self._danmaku.start(time.time())
+                            if self.platform == "douyin":
+                                from danmaku import DanmakuCapture
+                                self._danmaku = DanmakuCapture(
+                                    room_id=getattr(self, 'room_id', self.identifier),
+                                    username=self.info.username,
+                                    output_dir=self.output_dir,
+                                    ttwid=getattr(self, '_ttwid', ''),
+                                    session_id=session_id,
+                                )
+                            elif self.platform == "bilibili":
+                                from danmaku import BilibiliDanmakuCapture
+                                self._danmaku = BilibiliDanmakuCapture(
+                                    room_id=getattr(self, 'room_id', self.identifier),
+                                    username=self.info.username,
+                                    output_dir=self.output_dir,
+                                    session_id=session_id,
+                                )
+                            elif self.platform == "twitch":
+                                from danmaku import TwitchDanmakuCapture
+                                self._danmaku = TwitchDanmakuCapture(
+                                    channel=self.identifier,
+                                    username=self.info.username,
+                                    output_dir=self.output_dir,
+                                    session_id=session_id,
+                                )
+                            else:
+                                self._danmaku = None
+                            if self._danmaku:
+                                await self._danmaku.start(time.time())
                         except Exception as e:
                             logger.warning(f"[{self.info.username}] Danmaku capture start failed: {e}")
                             self._danmaku = None
@@ -923,8 +978,7 @@ class DouyinRecorder(BaseLiveRecorder):
         # 抖音 CDN 较慢，放宽断流检测
         self.stall_timeout = 30
         self.grace_period = 90
-        # 弹幕抓取
-        self._danmaku = None
+        # 抖音弹幕默认开启（WebSocket 协议稳定）
         self._danmaku_enabled = True
         self._cached_stream_url = ""  # API 返回的流地址缓存
 
@@ -1443,6 +1497,105 @@ class YouTubeRecorder(BaseLiveRecorder):
 
 # ========== 通用平台（streamlink） ==========
 
+class HuyaRecorder(BaseLiveRecorder):
+    """虎牙直播录制 — streamlink"""
+    platform = "huya"
+
+    def __init__(self, identifier: str, output_dir: str, proxy: str = "", on_state_change=None):
+        super().__init__(identifier, output_dir, proxy, on_state_change)
+        self.info.platform = "huya"
+        self.info.live_url = identifier
+
+    def _get_stream_url(self) -> str:
+        return self.identifier
+
+    async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
+        try:
+            cmd = ["streamlink", "--json", self._get_stream_url()]
+            if self.proxy:
+                cmd = ["streamlink", "--json", "--http-proxy", self.proxy, self._get_stream_url()]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+            data = json.loads(stdout.decode())
+            if data.get("streams"):
+                return ModelStatus.PUBLIC, None, 0
+            return ModelStatus.OFFLINE, None, 0
+        except Exception as e:
+            logger.debug(f"[{self.info.username}] Huya check error: {e}")
+            return ModelStatus.UNKNOWN, None, 0
+
+    async def _do_record(self, output_path: str) -> bool:
+        return await self._record_with_streamlink(output_path, self._get_stream_url(), quality=self.quality)
+
+
+class DouyuRecorder(BaseLiveRecorder):
+    """斗鱼直播录制 — streamlink"""
+    platform = "douyu"
+
+    def __init__(self, identifier: str, output_dir: str, proxy: str = "", on_state_change=None):
+        super().__init__(identifier, output_dir, proxy, on_state_change)
+        self.info.platform = "douyu"
+        self.info.live_url = identifier
+
+    def _get_stream_url(self) -> str:
+        return self.identifier
+
+    async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
+        try:
+            cmd = ["streamlink", "--json", self._get_stream_url()]
+            if self.proxy:
+                cmd = ["streamlink", "--json", "--http-proxy", self.proxy, self._get_stream_url()]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+            data = json.loads(stdout.decode())
+            if data.get("streams"):
+                return ModelStatus.PUBLIC, None, 0
+            return ModelStatus.OFFLINE, None, 0
+        except Exception as e:
+            logger.debug(f"[{self.info.username}] Douyu check error: {e}")
+            return ModelStatus.UNKNOWN, None, 0
+
+    async def _do_record(self, output_path: str) -> bool:
+        return await self._record_with_streamlink(output_path, self._get_stream_url(), quality=self.quality)
+
+
+class KickRecorder(BaseLiveRecorder):
+    """Kick 直播录制 — streamlink"""
+    platform = "kick"
+
+    def __init__(self, identifier: str, output_dir: str, proxy: str = "", on_state_change=None):
+        super().__init__(identifier, output_dir, proxy, on_state_change)
+        self.info.platform = "kick"
+        self.info.live_url = identifier
+
+    def _get_stream_url(self) -> str:
+        return self.identifier
+
+    async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
+        try:
+            cmd = ["streamlink", "--json", self._get_stream_url()]
+            if self.proxy:
+                cmd = ["streamlink", "--json", "--http-proxy", self.proxy, self._get_stream_url()]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+            data = json.loads(stdout.decode())
+            if data.get("streams"):
+                return ModelStatus.PUBLIC, None, 0
+            return ModelStatus.OFFLINE, None, 0
+        except Exception as e:
+            logger.debug(f"[{self.info.username}] Kick check error: {e}")
+            return ModelStatus.UNKNOWN, None, 0
+
+    async def _do_record(self, output_path: str) -> bool:
+        return await self._record_with_streamlink(output_path, self._get_stream_url(), quality=self.quality)
+
+
 class GenericRecorder(BaseLiveRecorder):
     """通用录制器 — 支持任意 streamlink/yt-dlp 可识别的直播/视频（2 级降级策略）"""
     platform = "generic"
@@ -1751,6 +1904,9 @@ PLATFORM_CLASSES = {
     "bilibili": BilibiliRecorder,
     "twitch": TwitchRecorder,
     "youtube": YouTubeRecorder,
+    "huya": HuyaRecorder,
+    "douyu": DouyuRecorder,
+    "kick": KickRecorder,
     "generic": GenericRecorder,
 }
 
@@ -1864,6 +2020,12 @@ class RecorderManager:
         d["custom_cookies"] = rec.custom_cookies or ""
         d["custom_stream_url"] = rec.custom_stream_url or ""
         d["schedule"] = rec.schedule
+        # 当前活跃 session 的开始时间（用于前端显示本场累计时长）
+        active_session = next(
+            (s for s in reversed(rec._sessions) if s.status == "active"), None
+        )
+        d["session_started_at"] = active_session.started_at if active_session else None
+        d["session_segment_count"] = len(active_session.segments) if active_session else 0
         return d
 
     def get_all_info(self) -> list[dict]:
@@ -1924,13 +2086,12 @@ class RecorderManager:
                                 valid_files: list[str], codec_consistent: bool,
                                 gap_minutes: float = 15) -> tuple[float, list[str]]:
         """计算合并信心度评分，返回 (score, reasons)"""
+        # session_id 精确匹配 → 直接高信心，无需用户确认
+        if session.session_id:
+            return 0.9, ["精确会话匹配"]
+
         score = 0.0
         reasons = []
-
-        # 精确 session 匹配加分最高
-        if session.session_id:
-            score += 0.4
-            reasons.append("同一会话")
 
         # 文件名前缀同一用户
         if valid_files and all(f.startswith(username) for f in valid_files):
@@ -2115,58 +2276,49 @@ class RecorderManager:
 
                     if confidence < 0.4:
                         logger.warning(f"[{username}] Session {session.session_id}: low confidence ({confidence:.2f}), skipping auto-merge")
+                        skip_reason = f"信心度过低({confidence*100:.0f}%)：{', '.join(confidence_reasons)}"
+                        session.merge_error = skip_reason
                         if hasattr(self, '_merge_callback') and self._merge_callback:
                             try:
                                 await self._merge_callback(username, session.session_id,
                                                            "merge_low_confidence",
                                                            confidence=confidence,
                                                            reasons=confidence_reasons,
+                                                           skip_reason=skip_reason,
                                                            files=valid)
                             except Exception:
                                 pass
                         continue
                     elif confidence < 0.7:
-                        logger.info(f"[{username}] Session {session.session_id}: medium confidence ({confidence:.2f}), notifying user")
-                        # 写入待确认队列
-                        if self.db:
-                            try:
-                                self.db.upsert_merge_queue(
-                                    session_id=session.session_id,
-                                    username=username,
-                                    segments=valid,
-                                    confidence=confidence,
-                                    reasons=confidence_reasons,
-                                )
-                            except Exception as _e:
-                                logger.warning(f"[{username}] Failed to write merge_queue: {_e}")
-                        if hasattr(self, '_merge_callback') and self._merge_callback:
-                            try:
-                                await self._merge_callback(username, session.session_id,
-                                                           "merge_confirm_required",
-                                                           confidence=confidence,
-                                                           reasons=confidence_reasons,
-                                                           files=valid)
-                            except Exception:
-                                pass
-                        # 中等信心度：写入队列等待用户确认，不自动合并
-                        continue
+                        logger.info(f"[{username}] Session {session.session_id}: medium confidence ({confidence:.2f}), auto-merging (smart mode)")
+                        merge_type_label = "auto_smart"
+                    else:
+                        merge_type_label = "auto_high"
 
                     total = sum((model_dir / fn).stat().st_size for fn in valid)
                     logger.info(f"[{username}] Session {session.session_id}: merging {len(valid)} segments ({total/1024/1024:.1f} MB)...")
                     session.status = "merging"
                     session.merge_started_at = time.time()
+                    session.original_segments = list(valid)
                     # 持久化 merging 状态
                     self._persist_sessions(username, sessions)
 
                     try:
-                        merge_id = await self.merge_segments(username, valid, delete_originals=True)
+                        rec_obj = self.recorders.get(username)
+                        should_delete = getattr(rec_obj, 'auto_delete_originals', False)
+                        merge_id = await self.merge_segments(username, valid, delete_originals=should_delete)
                         merge_info = self._active_merges.get(merge_id, {})
                         if merge_info.get("status") == "done":
                             session.status = "merged"
                             session.merged_file = merge_info.get("filename", "")
-                            # 通知前端自动合并完成
+                            session.merge_type = merge_type_label
+                            session.rollback_deadline = time.time() + 72 * 3600
                             await self._notify_merge(username, session.session_id, "auto_merge_done",
-                                                     filename=session.merged_file)
+                                                     filename=session.merged_file,
+                                                     merge_type=merge_type_label,
+                                                     confidence=confidence,
+                                                     savings_bytes=merge_info.get("savings_bytes", 0),
+                                                     total_duration=int(ended_at - started_at) if (ended_at := session.ended_at or 0) and (started_at := session.started_at or 0) else 0)
                         else:
                             session.status = "error"
                             session.merge_error = merge_info.get("error", "合并失败")

@@ -45,6 +45,11 @@ const _IC = {
   history:'M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0013 21a9 9 0 000-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z',
   visibility:'M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z',
   expand_more:'M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z',
+  auto_fix_high:'M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14zM4.5 11.5l2 2 7.5-7.5-2-2zm13.4.3l-7 7-3.5-3.5-1.5 1.5 5 5 8.5-8.5z',
+  sync:'M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z',
+  radio_button_unchecked:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z',
+  open_in_new:'M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z',
+  share:'M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z',
 };
 function _ri(root){
   (root||document).querySelectorAll('.material-symbols-outlined').forEach(el=>{
@@ -132,12 +137,20 @@ document.addEventListener('DOMContentLoaded',()=>{
       <button class="px-3 py-1 bg-gradient-to-br from-primary-container to-primary text-on-primary-container text-[11px] font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="startAll()" aria-label="全部启动">全部启动</button>
       <button class="px-3 py-1 bg-surface-container-highest text-on-surface text-[11px] font-bold rounded border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all" @click="stopAll()" aria-label="全部停止">全部停止</button>
       <span class="material-symbols-outlined cursor-pointer hover:bg-surface-container-highest p-1.5 rounded-full transition-all text-on-surface-variant text-xl" @click="showSettings=true" role="button" aria-label="设置">settings</span>
+      <!-- 事件通知中心 -->
+      <button class="relative flex items-center justify-center w-8 h-8 rounded-full hover:bg-surface-container-highest transition-all"
+        @click="showNotifications=!showNotifications; if(showNotifications) markNotificationsRead()" aria-label="通知中心">
+        <span class="material-symbols-outlined text-on-surface-variant text-base">info</span>
+        <span x-show="unreadNotifCount > 0" x-cloak
+          class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-primary text-on-primary text-[9px] font-bold rounded-full flex items-center justify-center"
+          x-text="unreadNotifCount"></span>
+      </button>
       <!-- 合并待确认队列 badge -->
       <button x-show="mergeQueueCount > 0" x-cloak
-        class="relative flex items-center justify-center w-8 h-8 rounded-full bg-error/15 hover:bg-error/25 transition-all"
+        class="relative flex items-center justify-center w-8 h-8 rounded-full bg-warning/15 hover:bg-warning/25 transition-all"
         @click="showMergeQueue=true; fetchMergeQueue()" aria-label="待确认合并">
-        <span class="material-symbols-outlined text-error text-base">history</span>
-        <span class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-error text-on-error text-[9px] font-bold rounded-full flex items-center justify-center" x-text="mergeQueueCount"></span>
+        <span class="material-symbols-outlined text-warning text-base">history</span>
+        <span class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-warning text-on-error text-[9px] font-bold rounded-full flex items-center justify-center" x-text="mergeQueueCount"></span>
       </button>
       <!-- 用户菜单 -->
       <div class="relative" x-show="authUser" x-cloak>
@@ -352,7 +365,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   <div class="text-center py-24 text-on-surface-variant">
     <span class="material-symbols-outlined text-6xl opacity-20 mb-4">sensors</span>
     <p class="text-lg font-medium mb-2">暂无监控主播</p>
-    <p class="text-sm opacity-60">支持平台：抖音 · B站 · Twitch · YouTube<br/>粘贴直播 URL 即可开始录制</p>
+    <p class="text-sm opacity-60">支持平台：抖音 · B站 · Twitch · YouTube · 虎牙 · 斗鱼 · Kick<br/>粘贴直播 URL 即可开始录制</p>
   </div>
 </template>
 
@@ -379,8 +392,9 @@ document.addEventListener('DOMContentLoaded',()=>{
           </span>
         </template>
         <template x-if="m.state==='recording' && m.current_recording">
-          <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1">
-            <span class="text-[10px] font-mono text-white/90" x-text="fmtDur(Math.floor((_recTick||Date.now())/1000 - m.current_recording.start_time))"></span>
+          <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1 flex items-center justify-between">
+            <span class="text-[10px] font-mono text-white/90" x-text="fmtDur(Math.floor((_recTick||Date.now())/1000 - (m.session_started_at||m.current_recording.start_time)))"></span>
+            <span x-show="m.session_segment_count > 1" class="text-[9px] text-white/60" x-text="m.session_segment_count + '片段'"></span>
           </div>
         </template>
       </div>
@@ -418,8 +432,8 @@ document.addEventListener('DOMContentLoaded',()=>{
         </div>
         <!-- Row 2: Platform + Viewers + Stats -->
         <div class="flex items-center gap-2 text-[11px] text-on-surface-variant mb-1.5">
-          <span class="font-medium" :style="({douyin:'color:#fe2c55',bilibili:'color:#00aeec',twitch:'color:#9146ff',youtube:'color:#ff0000'})[m.platform]||''"
-            x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube'})[m.platform]||m.platform"></span>
+          <span class="font-medium" :style="({douyin:'color:#fe2c55',bilibili:'color:#00aeec',twitch:'color:#9146ff',youtube:'color:#ff0000',huya:'color:#f60',douyu:'color:#1ba8ff',kick:'color:#53fc18'})[m.platform]||''"
+            x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',huya:'虎牙',douyu:'斗鱼',kick:'Kick'})[m.platform]||m.platform"></span>
           <template x-if="m.quality && m.quality !== 'best'">
             <span class="text-primary font-bold" x-text="m.quality"></span>
           </template>
@@ -572,6 +586,10 @@ document.addEventListener('DOMContentLoaded',()=>{
             </div>
             <div class="flex items-center gap-2">
               <span class="text-sm font-bold" x-text="fmtSize(item.total_size)"></span>
+              <a class="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-0.5 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary"
+                :href="'/api/recordings/'+item.username+'/export'" @click.stop title="导出 CSV">
+                <span class="material-symbols-outlined text-sm">download</span>
+              </a>
               <span class="material-symbols-outlined text-on-surface-variant text-sm transition-transform"
                 :class="storageExpandedUser===item.username ? 'rotate-180' : ''">expand_more</span>
             </div>
@@ -586,72 +604,140 @@ document.addEventListener('DOMContentLoaded',()=>{
             </div>
           </div>
         </div>
-        <!-- 展开的文件列表 + 内联播放器 -->
+        <!-- 展开的会话分组视图 + 内联播放器 -->
         <div x-show="storageExpandedUser===item.username" x-cloak class="border-t border-outline-variant/10 bg-surface-container-low">
           <!-- 内联播放器 -->
           <div x-show="storagePlayingVideo" class="p-3 bg-black">
             <video class="w-full max-h-64 rounded-lg" controls :src="storagePlayingVideo" @click.stop></video>
             <button class="mt-1 text-[10px] text-on-surface-variant hover:text-on-surface" @click.stop="storagePlayingVideo=null">关闭播放器</button>
           </div>
-          <!-- 批量操作工具栏 -->
-          <div x-show="!storageFilesLoading && storageFiles.length > 0" class="px-5 py-2 bg-surface-container-high border-b border-outline-variant/10 flex items-center justify-between gap-3">
-            <div class="flex items-center gap-2">
-              <input type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary"
-                :checked="storageBatchMode && storageSelectedFiles.length === storageFiles.length"
-                @change="storageSelectedFiles = $event.target.checked ? storageFiles.map(f=>f.filename) : []"/>
-              <button class="px-2 py-1 text-xs font-medium rounded transition-all"
-                :class="storageBatchMode ? 'bg-primary/20 text-primary' : 'bg-surface-container-highest text-on-surface-variant hover:text-on-surface'"
-                @click="storageBatchMode = !storageBatchMode; storageSelectedFiles = []"
-                x-text="storageBatchMode ? '取消批量' : '批量操作'"></button>
-              <span x-show="storageBatchMode && storageSelectedFiles.length > 0" class="text-xs text-on-surface-variant" x-text="'已选 ' + storageSelectedFiles.length + ' 个'"></span>
-            </div>
-            <div x-show="storageBatchMode && storageSelectedFiles.length > 0" class="flex items-center gap-2">
-              <button class="px-2 py-1 bg-primary/15 text-primary text-xs font-bold rounded hover:bg-primary/25 transition-colors"
-                @click="storageBatchDownload(item.username)">
-                <span class="material-symbols-outlined text-xs mr-1">download</span>批量下载
-              </button>
-              <button class="px-2 py-1 bg-error/15 text-error text-xs font-bold rounded hover:bg-error/25 transition-colors"
-                @click="storageBatchDelete(item.username)">
-                <span class="material-symbols-outlined text-xs mr-1">delete</span>批量删除
-              </button>
-            </div>
-          </div>
-          <!-- 文件列表 -->
+          <!-- 加载中 -->
           <div x-show="storageFilesLoading" class="flex items-center justify-center py-4 text-on-surface-variant text-xs">
             <span class="anim-spin material-symbols-outlined mr-1 text-sm">progress_activity</span>加载中...
           </div>
-          <div x-show="!storageFilesLoading" class="divide-y divide-outline-variant/5 max-h-64 overflow-y-auto">
-              <template x-for="f in storageFiles" :key="f.filename">
-              <div class="flex items-center gap-2 px-5 py-2 hover:bg-surface-container/50 transition-colors">
-                <!-- 批量选择复选框 -->
-                <input x-show="storageBatchMode" type="checkbox" class="rounded bg-surface-container-highest border-outline-variant text-primary focus:ring-primary"
-                  :checked="storageSelectedFiles.includes(f.filename)"
-                  @change="storageSelectedFiles.includes(f.filename) ? storageSelectedFiles.splice(storageSelectedFiles.indexOf(f.filename), 1) : storageSelectedFiles.push(f.filename)"/>
-                <!-- 缩略图 -->
-                <div class="flex-shrink-0 w-12 h-8 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center cursor-pointer"
-                  @click.stop="storagePlayingVideo='/api/video/'+item.username+'/'+f.filename; storagePlayingUser=item.username">
-                  <img x-show="f.thumbnail_url" :src="f.thumbnail_url" class="w-full h-full object-cover" loading="lazy"/>
-                  <span x-show="!f.thumbnail_url" class="material-symbols-outlined text-on-surface-variant text-sm">video_file</span>
-                </div>
-                <button class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full bg-primary/10 hover:bg-primary/20 transition-colors"
-                  @click.stop="storagePlayingVideo='/api/video/'+item.username+'/'+f.filename; storagePlayingUser=item.username" title="播放">
-                  <span class="material-symbols-outlined text-primary text-sm">play_arrow</span>
-                </button>
-                <div class="flex-1 min-w-0">
-                  <p class="text-xs font-mono truncate" x-text="f.filename"></p>
-                  <p class="text-[10px] text-on-surface-variant" x-text="fmtSize(f.size) + (f.duration ? ' · ' + fmtDur(f.duration) : '')"></p>
-                </div>
-                <a class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all"
-                  :href="'/api/video/'+item.username+'/'+f.filename+'?download=1'" @click.stop title="下载">
-                  <span class="material-symbols-outlined text-sm">download</span>
-                </a>
-                <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-[#00b894] transition-all"
-                  @click.stop="generateSubtitle(item.username, f.filename)" title="生成字幕">
-                  <span class="material-symbols-outlined text-sm">receipt_long</span>
-                </button>
+          <!-- 会话分组列表 -->
+          <div x-show="!storageFilesLoading" class="divide-y divide-outline-variant/5 max-h-96 overflow-y-auto">
+            <template x-if="storageSessions[item.username] && storageSessions[item.username].length > 0">
+              <div>
+                <template x-for="sess in storageSessions[item.username]" :key="sess.session_id">
+                  <div class="border-b border-outline-variant/5 last:border-0">
+                    <!-- 会话头部 -->
+                    <div class="flex items-center gap-2 px-4 py-2.5 hover:bg-surface-container/50 cursor-pointer transition-colors"
+                      @click.stop="storageExpandedSession = storageExpandedSession===sess.session_id ? null : sess.session_id">
+                      <!-- 封面缩略图 -->
+                      <div class="flex-shrink-0 w-12 h-8 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center">
+                        <img x-show="sess.cover_url" :src="sess.cover_url" class="w-full h-full object-cover" loading="lazy"/>
+                        <span x-show="!sess.cover_url" class="material-symbols-outlined text-on-surface-variant text-xs"
+                          :class="{'text-[#00b894]': sess.status==='merged', 'text-warning': sess.status==='ended'||sess.status==='error', 'text-primary': sess.status==='merging'}"
+                          x-text="sess.status==='merged'?'check_circle':sess.status==='merging'?'sync':sess.status==='error'?'error':'video_file'"></span>
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs font-medium" x-text="sess.started_at ? new Date(sess.started_at*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) + (sess.ended_at ? ' ~ ' + new Date(sess.ended_at*1000).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}) : '') : '未知时间'"></span>
+                          <span x-show="sess.duration > 0" class="text-[10px] text-on-surface-variant" x-text="fmtDur(sess.duration)"></span>
+                          <span x-show="sess.status==='merging'" class="text-[10px] text-primary animate-pulse" x-text="'合并中' + (activeMerges[sess.session_id]?.progress > 0 ? ' ' + Math.round(activeMerges[sess.session_id].progress*100)+'%' : '...')"></span>
+                          <span x-show="sess.merge_error" class="text-[10px] text-error truncate max-w-[120px]" :title="sess.merge_error" x-text="'失败: '+sess.merge_error"></span>
+                          <span x-show="sess.merge_type==='auto_smart'" class="text-[9px] px-1 py-0.5 bg-tertiary/15 text-tertiary rounded font-bold">智能</span>
+                          <span x-show="sess.merge_type==='manual'" class="text-[9px] px-1 py-0.5 bg-surface-container-highest text-on-surface-variant rounded font-bold">手动</span>
+                        </div>
+                        <div class="flex items-center gap-2 mt-0.5">
+                          <span class="text-[10px] text-on-surface-variant" x-text="fmtSize(sess.total_size)"></span>
+                          <span x-show="sess.status!=='merged'" class="text-[10px] text-on-surface-variant" x-text="sess.segment_count + ' 个片段'"></span>
+                          <span x-show="sess.status==='merged' && sess.merged_file" class="text-[10px] text-[#00b894]" x-text="'→ ' + sess.merged_file"></span>
+                        </div>
+                      </div>
+                      <!-- 操作按钮 -->
+                      <div class="flex items-center gap-1 flex-shrink-0" @click.stop>
+                        <template x-if="sess.status==='merged' && sess.merged_file">
+                          <div class="flex items-center gap-1">
+                            <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all"
+                              @click.stop="storagePlayingVideo='/api/video/'+item.username+'/'+sess.merged_file" title="播放">
+                              <span class="material-symbols-outlined text-sm">play_arrow</span>
+                            </button>
+                            <a class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all"
+                              :href="'/api/video/'+item.username+'/'+sess.merged_file+'?download=1'" @click.stop title="下载">
+                              <span class="material-symbols-outlined text-sm">download</span>
+                            </a>
+                            <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-[#00b894] transition-all"
+                              @click.stop="generateSubtitle(item.username, sess.merged_file)" title="生成字幕">
+                              <span class="material-symbols-outlined text-sm">receipt_long</span>
+                            </button>
+                            <template x-if="sess.rollback_deadline && Date.now()/1000 < sess.rollback_deadline && sess.original_segments?.length > 0">
+                              <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-warning transition-all"
+                                @click.stop="rollbackMerge(item.username, sess.session_id)" title="撤回合并（恢复原始分片）">
+                                <span class="material-symbols-outlined text-sm">undo</span>
+                              </button>
+                            </template>
+                          </div>
+                        </template>
+                        <template x-if="sess.status==='ended' || sess.status==='error'">
+                          <div class="flex items-center gap-1">
+                            <button class="px-2 py-0.5 bg-primary/15 text-primary text-[10px] font-bold rounded hover:bg-primary/25 transition-colors"
+                              @click.stop="mergeSession(item.username, sess.session_id)">合并</button>
+                            <template x-if="sess.merge_error && sess.merge_error.includes('信心度过低')">
+                              <span class="text-[9px] text-warning truncate max-w-[100px]" :title="sess.merge_error + '\n点击「合并」按钮可强制合并'" x-text="'⚠ ' + sess.merge_error.substring(0, 20) + '...'"></span>
+                            </template>
+                          </div>
+                        </template>
+                        <span class="material-symbols-outlined text-on-surface-variant text-sm transition-transform"
+                          :class="storageExpandedSession===sess.session_id ? 'rotate-180' : ''">expand_more</span>
+                      </div>
+                    </div>
+                    <!-- 合并进度条 -->
+                    <div x-show="sess.status==='merging' && activeMerges[sess.session_id]?.progress > 0" class="h-1 bg-surface-container-highest">
+                      <div class="h-full bg-primary transition-all" :style="'width:'+(activeMerges[sess.session_id]?.progress*100)+'%'"></div>
+                    </div>
+                    <!-- 展开的片段列表 -->
+                    <div x-show="storageExpandedSession===sess.session_id" class="bg-surface-container-lowest divide-y divide-outline-variant/5">
+                      <template x-for="f in (sess.status==='merged' && sess.merged_file ? [{filename:sess.merged_file, size:sess.total_size, thumbnail_url: sess.merged_info?.thumbnail_url||''}] : sess.segments)" :key="f.filename">
+                        <div class="flex items-center gap-2 px-6 py-1.5 hover:bg-surface-container/30 transition-colors">
+                          <div class="flex-shrink-0 w-10 h-7 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center cursor-pointer"
+                            @click.stop="storagePlayingVideo='/api/video/'+item.username+'/'+f.filename">
+                            <img x-show="f.thumbnail_url" :src="f.thumbnail_url" class="w-full h-full object-cover" loading="lazy"/>
+                            <span x-show="!f.thumbnail_url" class="material-symbols-outlined text-on-surface-variant text-xs">video_file</span>
+                          </div>
+                          <div class="flex-1 min-w-0">
+                            <p class="text-[10px] font-mono truncate" x-text="f.filename"></p>
+                            <p class="text-[9px] text-on-surface-variant" x-text="fmtSize(f.size)"></p>
+                          </div>
+                          <a class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all"
+                            :href="'/api/video/'+item.username+'/'+f.filename+'?download=1'" @click.stop title="下载">
+                            <span class="material-symbols-outlined text-xs">download</span>
+                          </a>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
               </div>
             </template>
-            <div x-show="!storageFilesLoading && storageFiles.length===0" class="px-5 py-4 text-xs text-on-surface-variant text-center">暂无文件</div>
+            <template x-if="!storageSessions[item.username] || storageSessions[item.username].length === 0">
+              <div>
+                <!-- fallback: 无会话数据时显示平铺文件列表 -->
+                <template x-for="f in storageFiles" :key="f.filename">
+                  <div class="flex items-center gap-2 px-5 py-2 hover:bg-surface-container/50 transition-colors">
+                    <div class="flex-shrink-0 w-12 h-8 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center cursor-pointer"
+                      @click.stop="storagePlayingVideo='/api/video/'+item.username+'/'+f.filename">
+                      <img x-show="f.thumbnail_url" :src="f.thumbnail_url" class="w-full h-full object-cover" loading="lazy"/>
+                      <span x-show="!f.thumbnail_url" class="material-symbols-outlined text-on-surface-variant text-sm">video_file</span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-xs font-mono truncate" x-text="f.filename"></p>
+                      <p class="text-[10px] text-on-surface-variant" x-text="fmtSize(f.size)"></p>
+                    </div>
+                    <a class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all"
+                      :href="'/api/video/'+item.username+'/'+f.filename+'?download=1'" @click.stop title="下载">
+                      <span class="material-symbols-outlined text-sm">download</span>
+                    </a>
+                    <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-[#00b894] transition-all"
+                      @click.stop="generateSubtitle(item.username, f.filename)" title="生成字幕">
+                      <span class="material-symbols-outlined text-sm">receipt_long</span>
+                    </button>
+                  </div>
+                </template>
+                <div x-show="storageFiles.length===0" class="px-5 py-4 text-xs text-on-surface-variant text-center">暂无文件</div>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -664,7 +750,10 @@ document.addEventListener('DOMContentLoaded',()=>{
     <h3 class="text-sm font-bold">批量操作 & 清理</h3>
   </div>
   <div class="p-5 space-y-3">
-    <div class="flex items-center gap-3 pb-3 border-b border-outline-variant/10">
+    <div class="flex items-center gap-3 pb-3 border-b border-outline-variant/10 flex-wrap">
+      <button class="px-3 py-1.5 bg-gradient-to-r from-[#00b894] to-[#00cec9] text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="oneClickOrganize()">
+        <span class="material-symbols-outlined text-xs mr-1">auto_fix_high</span>一键整理
+      </button>
       <button class="px-3 py-1.5 bg-gradient-to-r from-primary-container to-primary text-white text-xs font-bold rounded hover:opacity-90 active:scale-95 transition-all" @click="batchMergeAllEnded()">合并所有待合并会话</button>
       <button class="px-3 py-1.5 bg-surface-container-highest text-on-surface text-xs font-bold rounded border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all" @click="batchCleanupMerged()">清理已合并原文件</button>
       <button class="px-3 py-1.5 bg-surface-container-highest text-on-surface text-xs font-bold rounded border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all" @click="retryFailedMerges()">重试失败合并</button>
@@ -794,10 +883,10 @@ document.addEventListener('DOMContentLoaded',()=>{
     <h3 class="text-sm font-bold">平台连接状态</h3>
   </div>
   <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 p-6">
-    <template x-for="p in ['douyin','bilibili','twitch','youtube']" :key="p">
+    <template x-for="p in ['douyin','bilibili','twitch','youtube','huya','douyu','kick']" :key="p">
       <div class="bg-surface-container-low p-3 rounded-lg flex items-center gap-3">
         <span class="w-2.5 h-2.5 rounded-full" :class="models.some(m=>m.platform===p)?'bg-[#00b894]':'bg-outline-variant'"></span>
-        <span class="text-sm font-medium capitalize" x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube'})[p]"></span>
+        <span class="text-sm font-medium capitalize" x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',huya:'虎牙',douyu:'斗鱼',kick:'Kick'})[p]"></span>
       </div>
     </template>
   </div>
@@ -840,6 +929,20 @@ document.addEventListener('DOMContentLoaded',()=>{
       </div>
       <div class="flex justify-between"><span class="text-on-surface-variant">监控主播数</span><span class="font-bold" x-text="models.length"></span></div>
     </div>
+  </div>
+</div>
+<!-- 配置导入/导出 -->
+<div class="bg-surface-container p-6 rounded-xl border border-outline-variant/10 mb-6">
+  <h3 class="text-sm font-bold mb-4 flex items-center gap-2"><span class="material-symbols-outlined text-primary text-lg">import_export</span>配置导入/导出</h3>
+  <div class="flex flex-wrap gap-3 items-center">
+    <a href="/api/config/export" download class="px-4 py-2 bg-primary text-white text-sm font-bold rounded-lg hover:opacity-90 active:scale-95 transition-all flex items-center gap-2">
+      <span class="material-symbols-outlined text-base">download</span>导出配置
+    </a>
+    <label class="px-4 py-2 bg-surface-container-highest text-on-surface text-sm font-bold rounded-lg border border-outline-variant/20 hover:bg-surface-bright active:scale-95 transition-all cursor-pointer flex items-center gap-2">
+      <span class="material-symbols-outlined text-base">upload</span>导入配置
+      <input type="file" accept=".json" class="hidden" @change="importConfig($event)">
+    </label>
+    <span class="text-xs text-on-surface-variant">导出包含所有主播、设置和 Webhook 配置，可用于迁移或备份</span>
   </div>
 </div>
 <!-- Log Viewer -->
@@ -1650,6 +1753,12 @@ document.addEventListener('DOMContentLoaded',()=>{
             <option value="0">不清理</option><option value="7">7 天</option><option value="14">14 天</option><option value="30">30 天</option><option value="60">60 天</option><option value="90">90 天</option>
           </select>
         </div>
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">磁盘预警阈值</label>
+          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.disk_warn_warning_mb||10240" @change="updateSetting('disk_warn_warning_mb',parseInt($event.target.value))">
+            <option value="5120">预警 5 GB</option><option value="10240">预警 10 GB</option><option value="20480">预警 20 GB</option><option value="51200">预警 50 GB</option>
+          </select>
+        </div>
       </div>
       <!-- Phase 3: 自动分割 + 录后脚本 + 文件名模板 -->
       <div class="grid grid-cols-2 gap-3">
@@ -1986,7 +2095,7 @@ function app() {
     manualClipStart: 0, manualClipEnd: 60, clipPreviewUrl: '', clipVideoDuration: 0, clipWatermark: '',
     playingVideo: null, toast: '', toastType: 'success', toastTimer: null, ticker: null,
     mergeGroups: [], mergeGap: 15, activeMerges: {}, deleteAfterMerge: false, excludedFiles: [], mergePreviewResult: null, mergePreviewLoading: false,
-    settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true },
+    settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true, disk_warn_critical_mb: 500, disk_warn_error_mb: 5120, disk_warn_warning_mb: 10240 },
     showSettings: false, diskInfo: { recordings_bytes: 0, free_bytes: 0, total_bytes: 0 }, _lastEventTs: 0,
     // 用户认证
     authRequired: false, authUser: null, authTab: 'login', authEmail: '', authPassword: '', authDisplayName: '', authError: '', authBusy: false, showUserMenu: false,
@@ -2003,6 +2112,7 @@ function app() {
     storageExpandedUser: null, storageFiles: [], storageFilesLoading: false,
     storagePlayingVideo: null, storagePlayingUser: null,
     storageBatchMode: false, storageSelectedFiles: [],
+    storageSessions: {}, storageExpandedSession: null,
     // 全局搜索
     searchQuery: '', searchResults: [], searchDebounceTimer: null,
     // 分发
@@ -2019,6 +2129,8 @@ function app() {
     mergeQueueCount: 0, showMergeQueue: false, mergeQueueItems: [], mergeQueueLoading: false,
     // 智能清理建议
     showCleanupPanel: false, cleanupSuggestions: [], cleanupLoading: false,
+    // 事件通知中心
+    showNotifications: false, notifications: [], unreadNotifCount: 0, lastNotifRead: Date.now(),
 
     get sortedModels() {
       const order = { recording: 0, reconnecting: 1, monitoring: 2, error: 3, idle: 4 };
@@ -2096,9 +2208,17 @@ function app() {
     async fetchStorageBreakdown() { try { const r = await this._apiFetch('/api/storage/breakdown'); if (r.ok) this.storageBreakdown = await r.json(); } catch(e) { this.storageBreakdown = []; } },
     async loadStorageFiles(username) {
       this.storageFiles = []; this.storageFilesLoading = true; this.storagePlayingVideo = null;
+      this.storageExpandedSession = null;
       try {
-        const r = await this._apiFetch(`/api/recordings/${username}`);
-        if (r.ok) this.storageFiles = await r.json();
+        const [rFiles, rSess] = await Promise.all([
+          this._apiFetch(`/api/recordings/${username}`),
+          this._apiFetch(`/api/sessions/${username}/summary`),
+        ]);
+        if (rFiles.ok) this.storageFiles = await rFiles.json();
+        if (rSess.ok) {
+          const sessions = await rSess.json();
+          this.storageSessions = { ...this.storageSessions, [username]: sessions };
+        }
       } catch(e) { this.storageFiles = []; }
       this.storageFilesLoading = false;
     },
@@ -2332,9 +2452,13 @@ function app() {
             if (m.bandwidth_history.length > 30) m.bandwidth_history.shift();
           }
           if (prev && prev.state !== msg.data.state) {
-            if (msg.data.state === 'recording') this.desktopNotify(`${msg.data.username} 开始录制`, '直播录制已启动');
+            if (msg.data.state === 'recording') {
+              this.desktopNotify(`${msg.data.username} 开始录制`, '直播录制已启动');
+              this.addNotification('recording_start', `${msg.data.username} 开始录制`, '直播录制已启动');
+            }
             else if (prev.state === 'recording' && msg.data.state !== 'reconnecting') {
               this.desktopNotify(`${msg.data.username} 录制结束`, '直播录制已停止');
+              this.addNotification('recording_end', `${msg.data.username} 录制结束`, '直播录制已停止');
               // 清空码率历史
               const m = this.models.find(x => x.username === msg.data.username);
               if (m) m.bandwidth_history = [];
@@ -2349,9 +2473,11 @@ function app() {
           const savings = msg.data.savings_pct > 0 ? ` · 节省 ${this.fmtSize(msg.data.savings_bytes)} (${msg.data.savings_pct}%)` : '';
           this.showToast(`${msg.data.username||''} 合并完成: ${msg.data.filename||''} ${detail}${savings}`);
           this.desktopNotify(`${msg.data.username||''} 合并完成`, msg.data.filename||'');
+          this.addNotification('merge_done', `${msg.data.username||''} 合并完成`, `${msg.data.filename||''} ${detail}${savings}`);
           if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
+          // 刷新 Storage 会话视图
+          if (this.storageExpandedUser === msg.data.username) { this.loadStorageFiles(msg.data.username); this.fetchStorageBreakdown(); }
         }
-        else if (msg.type === 'merge_error') { this.activeMerges[msg.data.merge_id] = { status: 'error' }; this.showToast('合并失败: '+(msg.data.error||'未知错误')); if (this.showModal && this.modalTab==='sessions') this.loadSessions(); }
         else if (msg.type === 'merge_progress') {
           const d = msg.data;
           this.activeMerges[d.merge_id] = { ...this.activeMerges[d.merge_id], status: 'running', progress: d.progress, message: d.message || '' };
@@ -2360,63 +2486,78 @@ function app() {
           if (m) { m.merge_status = 'merging'; m.merge_progress = d.progress; }
         }
         else if (msg.type === 'auto_merge_done') {
-          if (msg.data.filename) { this.showToast(`${msg.data.username} 已自动合并 → ${msg.data.filename}`); this.desktopNotify(`${msg.data.username} 自动合并完成`, msg.data.filename); }
+          if (msg.data.filename) {
+            const d = msg.data;
+            const typeLabel = d.merge_type === 'auto_smart' ? '智能合并' : '自动合并';
+            const extra = [d.total_duration > 0 ? this.fmtDur(d.total_duration) : '', d.savings_bytes > 0 ? '节省 '+this.fmtSize(d.savings_bytes) : ''].filter(Boolean).join(' · ');
+            this.showToast(`${d.username} 已${typeLabel} → ${d.filename}${extra ? ' (' + extra + ')' : ''}（72h内可撤回）`);
+            this.desktopNotify(`${d.username} ${typeLabel}完成`, d.filename + (extra ? '\n' + extra : ''));
+            this.addNotification('merge_done', `${d.username} ${typeLabel}完成`, d.filename + (extra ? ' · ' + extra : ''));
+          }
           if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
           // P1: 更新主播卡片状态
           const m = this.models.find(x => x.username === msg.data.username);
           if (m) m.merge_status = 'merged';
-        }
-        else if (msg.type === 'merge_done') {
-          this.activeMerges[msg.data.merge_id] = { status: 'done', progress: 1 };
-          const detail = msg.data.input_count ? `${msg.data.input_count} 个片段 (${this.fmtSize(msg.data.input_size)})` : '';
-          const savings = msg.data.savings_pct > 0 ? ` · 节省 ${this.fmtSize(msg.data.savings_bytes)} (${msg.data.savings_pct}%)` : '';
-          this.showToast(`${msg.data.username||''} 合并完成: ${msg.data.filename||''} ${detail}${savings}`);
-          this.desktopNotify(`${msg.data.username||''} 合并完成`, msg.data.filename||'');
-          if (this.showModal && this.modalUsername === msg.data.username) { this.openRecordings(msg.data.username); if (this.modalTab==='merge') this.loadGroups(); if (this.modalTab==='sessions') this.loadSessions(); }
-          // P1: 更新主播卡片状态
-          const m = this.models.find(x => x.username === msg.data.username);
-          if (m) m.merge_status = 'merged';
+          // 刷新 Storage 会话视图
+          if (this.storageExpandedUser === msg.data.username) { this.loadStorageFiles(msg.data.username); this.fetchStorageBreakdown(); }
         }
         else if (msg.type === 'merge_error') {
           this.activeMerges[msg.data.merge_id] = { status: 'error' };
-          this.showToast('合并失败: '+(msg.data.error||'未知错误'));
+          const errMsg = '合并失败: '+(msg.data.error||'未知错误');
+          this.showToast(errMsg);
+          this.addNotification('error', `${msg.data.username||''} 合并失败`, msg.data.error||'未知错误');
           if (this.showModal && this.modalTab==='sessions') this.loadSessions();
         }
         else if (msg.type === 'merge_failed_permanent') {
-          // P0: 合并失败永久通知
-          this.showToast(`${msg.data.username} 合并失败（已重试${msg.data.retry_count}次）: ${msg.data.error||'未知错误'}`);
+          const errMsg = `合并失败（已重试${msg.data.retry_count}次）: ${msg.data.error||'未知错误'}`;
+          this.showToast(`${msg.data.username} ${errMsg}`);
+          this.addNotification('error', `${msg.data.username} 合并失败`, errMsg);
           const m = this.models.find(x => x.username === msg.data.username);
           if (m) m.merge_status = 'failed';
         }
         else if (msg.type === 'merge_confirm_required') {
-          // 中等信心度：已写入待确认队列
           this.mergeQueueCount = (this.mergeQueueCount || 0) + 1;
-          this.showToast(`${msg.data.username} 有待确认合并任务（信心度 ${(msg.data.confidence*100).toFixed(0)}%）`, 'warning');
+          const confPct = (msg.data.confidence*100).toFixed(0);
+          this.showToast(`${msg.data.username} 有待确认合并任务（信心度 ${confPct}%）`, 'warning');
+          this.addNotification('merge_done', `${msg.data.username} 待确认合并`, `信心度 ${confPct}%，请手动确认`);
         }
         else if (msg.type === 'merge_queue_update') {
           this.mergeQueueCount = msg.count || 0;
           if (this.showMergeQueue) this.fetchMergeQueue();
         }
         else if (msg.type === 'merge_low_confidence') {
-          // P0: 低信心度跳过合并
-          this.showToast(`${msg.data.username} 合并信心度过低 (${(msg.data.confidence*100).toFixed(0)}%)，已跳过`);
+          const d = msg.data;
+          const confPct = (d.confidence*100).toFixed(0);
+          const reason = d.skip_reason || `信心度过低(${confPct}%)`;
+          this.showToast(`${d.username} ${reason}，可手动点击合并`, 'warning');
+          this.addNotification('error', `${d.username} 自动合并已跳过`, `${reason}，请在 Storage 页面手动合并`);
+          if (this.storageExpandedUser === d.username) this.loadStorageFiles(d.username);
+        }
+        else if (msg.type === 'session_rollback') {
+          this.showToast(`${msg.data.username} 合并已撤回，原始分片已恢复`);
+          if (this.storageExpandedUser === msg.data.username) this.loadStorageFiles(msg.data.username);
+          this.fetchStorageBreakdown();
         }
         else if (msg.type === 'merge_cancelled') {
           this.showToast(`${msg.data.username} 合并已取消`);
         }
         else if (msg.type === 'segment_warning') {
           const d = msg.data;
-          this.showToast(`${d.username} 发现 ${(d.skipped_files||[]).length} 个损坏片段`);
+          const warnMsg = `发现 ${(d.skipped_files||[]).length} 个损坏片段`;
+          this.showToast(`${d.username} ${warnMsg}`);
+          this.addNotification('error', `${d.username} 片段警告`, warnMsg);
         }
         else if (msg.type === 'highlight_detected') {
           const d = msg.data;
           this.showToast(`${d.username} 检测到 ${d.count} 个高光片段`);
           this.desktopNotify(`${d.username} 高光检测完成`, `发现 ${d.count} 个高光片段`);
+          this.addNotification('highlight_detected', `${d.username} 高光检测完成`, `发现 ${d.count} 个高光片段`);
           if (this.currentPage === 'highlights') this.fetchHighlights();
         }
         else if (msg.type === 'clip_done') {
           const d = msg.data;
           this.showToast(`${d.username} 片段生成完成: ${d.filename||''}`);
+          this.addNotification('clip_generated', `${d.username} 片段生成完成`, d.filename||'');
           if (this.currentPage === 'clips') this.fetchClips();
         }
         else if (msg.type === 'clip_progress') {
@@ -2430,13 +2571,20 @@ function app() {
           const d = msg.data;
           this.showToast(`${d.username} FlashCut 完成！生成了 ${d.count} 条短视频`);
           this.desktopNotify('FlashCut 完成', `${d.username} 生成了 ${d.count} 条短视频`);
+          this.addNotification('clip_generated', `${d.username} FlashCut 完成`, `生成了 ${d.count} 条短视频`);
           if (this.currentPage === 'clips') this.fetchClips();
           if (this.currentPage === 'highlights') this.fetchHighlights();
         }
         else if (msg.type === 'settings_update') { this.settings = { ...this.settings, ...msg.data }; }
         else if (msg.type === 'disk_warning') {
-          this.showToast(`磁盘空间不足: ${msg.data.free_mb}MB 剩余` + (msg.data.critical ? ' (紧急)' : ''));
-          if (msg.data.critical) this.desktopNotify('磁盘空间紧急', `仅剩 ${msg.data.free_mb}MB，录制已停止`);
+          const freeMsg = `${msg.data.free_mb}MB 剩余` + (msg.data.critical ? ' (紧急)' : '');
+          this.showToast(`磁盘空间不足: ${freeMsg}`);
+          if (msg.data.critical) {
+            this.desktopNotify('磁盘空间紧急', `仅剩 ${msg.data.free_mb}MB，录制已停止`);
+            this.addNotification('error', '磁盘空间紧急', `仅剩 ${msg.data.free_mb}MB，录制已停止`);
+          } else {
+            this.addNotification('error', '磁盘空间不足', freeMsg);
+          }
           this.fetchDisk();
         }
       };
@@ -2857,9 +3005,31 @@ function app() {
       this.showUserMenu = false;
     },
 
-    async mergeSession(sid) {
+    async mergeSession(usernameOrSid, sessionId) {
+      // 两种调用约定：mergeSession(username, sessionId) 来自 Storage 页，mergeSession(sid) 来自 modal
+      const isModalCall = sessionId === undefined;
+      const username = isModalCall ? this.modalUsername : usernameOrSid;
+      const sid = isModalCall ? usernameOrSid : sessionId;
       this.activeMerges[sid] = { status: 'running', progress: 0 };
-      try { const r = await this._apiFetch(`/api/sessions/${this.modalUsername}/${sid}/merge`, { method: 'POST' }); const d = await r.json(); if (!r.ok) { this.activeMerges[sid]={status:'error'}; this.showToast('合并失败: '+(d.error||'未知错误')); } else if (d.status==='done') { this.activeMerges[sid]={status:'done',progress:1}; this.showToast('会话合并完成'); await this.loadSessions(); await this.openRecordings(this.modalUsername); } } catch(e) { this.activeMerges[sid]={status:'error'}; this.showToast('合并请求失败'); }
+      try {
+        const r = await this._apiFetch(`/api/sessions/${username}/${sid}/merge`, { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) {
+          this.activeMerges[sid] = { status: 'error' };
+          this.showToast('合并失败: ' + (d.error || '未知错误'), 'error');
+        } else if (d.status === 'done') {
+          this.activeMerges[sid] = { status: 'done', progress: 1 };
+          this.showToast('会话合并完成');
+          if (isModalCall) { await this.loadSessions(); await this.openRecordings(username); }
+          else { this.loadStorageFiles(username); }
+        } else {
+          this.showToast('合并已开始');
+          this.loadStorageFiles(username);
+        }
+      } catch(e) {
+        this.activeMerges[sid] = { status: 'error' };
+        this.showToast('合并请求失败', 'error');
+      }
     },
     async mergeAllEndedSessions() {
       if (!confirm('确认合并所有待合并会话？')) return;
@@ -2872,8 +3042,20 @@ function app() {
         this.fetchStorageBreakdown();
       } catch(e) { this.showToast('批量合并失败'); }
     },
+    async oneClickOrganize() {
+      if (!confirm('一键整理将合并所有待合并会话，然后清理原始片段文件。确认继续？')) return;
+      this.showToast('正在整理：合并中...');
+      try {
+        const r1 = await this._apiFetch('/api/sessions/merge-all-ended', { method: 'POST' });
+        const d1 = await r1.json();
+        this.showToast(`合并完成 ${d1.merged || 0} 个会话，正在清理原文件...`);
+        const r2 = await this._apiFetch('/api/recordings/cleanup-merged', { method: 'POST' });
+        const d2 = await r2.json();
+        this.showToast(`整理完成！合并 ${d1.merged || 0} 个，清理 ${d2.deleted || 0} 个原文件`);
+        this.fetchStorageBreakdown(); this.fetchDisk(); this.fetchMergeSavings();
+      } catch(e) { this.showToast('整理失败', 'error'); }
+    },
     async batchMergeAllEnded() {
-      if (!confirm('确认合并所有主播的待合并会话？')) return;
       this.showToast('正在批量合并...');
       try {
         const r = await this._apiFetch('/api/sessions/merge-all-ended', { method: 'POST' });
@@ -2910,6 +3092,44 @@ function app() {
           if (this.modalTab === 'sessions') this.loadSessions();
         } else { this.showToast('取消失败'); }
       } catch(e) { this.showToast('取消失败'); }
+    },
+    async rollbackMerge(username, sessionId) {
+      if (!confirm('确认撤回合并？将删除合并文件并恢复原始分片。')) return;
+      try {
+        const r = await this._apiFetch(`/api/sessions/${sessionId}/rollback`, { method: 'POST' });
+        if (r.ok) {
+          this.showToast('已撤回合并，原始分片已恢复', 'success');
+          if (this.storageExpandedUser) this.loadStorageFiles(this.storageExpandedUser);
+        } else {
+          const d = await r.json().catch(()=>({}));
+          this.showToast(d.error || '撤回失败', 'error');
+        }
+      } catch(e) { this.showToast('撤回失败', 'error'); }
+    },
+    async importConfig(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const mode = confirm('选择导入模式：\n\n点击「确定」= 合并（跳过已存在的主播）\n点击「取消」= 覆盖（添加所有主播）') ? 'merge' : 'overwrite';
+        const r = await this._apiFetch('/api/config/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data, mode }),
+        });
+        const result = await r.json();
+        if (r.ok) {
+          const msg = `导入完成：${result.imported_models} 个主播，${result.imported_settings} 项设置` + (result.errors?.length ? `，${result.errors.length} 条警告` : '');
+          this.showToast(msg, 'success');
+          await this.fetchModels(); await this.fetchSettings();
+        } else {
+          this.showToast(result.error || '导入失败', 'error');
+        }
+      } catch(e) {
+        this.showToast('导入失败：' + e.message, 'error');
+      }
+      event.target.value = '';
     },
     getSegmentFlex(seg, nextSeg, session) {
       // 根据文件名时间戳计算相对宽度
@@ -2974,22 +3194,6 @@ function app() {
         a.click(); URL.revokeObjectURL(url);
         this.showToast('配置已导出');
       } catch(e) { this.showToast('导出失败'); }
-    },
-
-    async importConfig(event) {
-      const file = event.target.files[0];
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const config = JSON.parse(text);
-        const r = await this._apiFetch('/api/config/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
-        const d = await r.json();
-        if (d.ok) {
-          this.showToast(`导入成功: ${d.imported_settings} 项设置, ${d.imported_models} 个主播`);
-          await this.fetchModels(); await this.fetchSettings();
-        } else { this.showToast(`导入失败: ${d.error}`); }
-      } catch(e) { this.showToast('导入失败: 文件格式错误'); }
-      event.target.value = '';
     },
 
     async mergePreview(username, files) {
@@ -3102,6 +3306,24 @@ function app() {
     },
     desktopNotify(title, body) { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body }); },
 
+    addNotification(type, title, message) {
+      const notif = { id: Date.now(), type, title, message, timestamp: Date.now() };
+      this.notifications.unshift(notif);
+      if (this.notifications.length > 50) this.notifications.pop();
+      if (!this.showNotifications) this.unreadNotifCount++;
+    },
+    markNotificationsRead() {
+      this.lastNotifRead = Date.now();
+      this.unreadNotifCount = 0;
+    },
+    formatNotifTime(ts) {
+      const diff = Math.floor((Date.now() - ts) / 1000);
+      if (diff < 60) return '刚刚';
+      if (diff < 3600) return Math.floor(diff / 60) + '分钟前';
+      if (diff < 86400) return Math.floor(diff / 3600) + '小时前';
+      return new Date(ts).toLocaleDateString('zh-CN');
+    },
+
     sessionStatusText(s) { return {active:'录制中',ended:'待合并',merging:'合并中',merged:'已合并',error:'错误'}[s]||s; },
     stateText(s) { return {idle:'未启动',monitoring:'监控中',recording:'录制中',reconnecting:'重连中',error:'错误'}[s]||s; },
     statusText(s) { return {offline:'离线',public:'在线',private:'私密',group:'团体秀',away:'离开',unknown:'检测中'}[s]||s; },
@@ -3203,6 +3425,79 @@ function app() {
           </div>
         </div>
       </template>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 事件通知中心 ===== -->
+<div x-show="showNotifications" x-cloak class="fixed inset-0 z-[150] flex items-start justify-end p-4 pointer-events-none">
+  <div @click.away="showNotifications=false"
+    class="w-full max-w-md bg-surface-container rounded-2xl shadow-2xl border border-outline-variant/20 pointer-events-auto max-h-[80vh] flex flex-col">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/10">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined text-primary text-lg">info</span>
+        <span class="font-bold text-sm">事件通知</span>
+        <span class="px-1.5 py-0.5 bg-primary/15 text-primary text-[10px] font-bold rounded-full" x-text="notifications.length"></span>
+      </div>
+      <button class="p-1 rounded-full hover:bg-surface-container-highest transition-colors" @click="showNotifications=false">
+        <span class="material-symbols-outlined text-on-surface-variant text-lg">close</span>
+      </button>
+    </div>
+    <div class="overflow-y-auto flex-1">
+      <template x-if="notifications.length === 0">
+        <div class="flex flex-col items-center justify-center py-12 text-on-surface-variant">
+          <span class="material-symbols-outlined text-4xl mb-2 opacity-30">info</span>
+          <p class="text-sm">暂无事件通知</p>
+        </div>
+      </template>
+      <div class="divide-y divide-outline-variant/5">
+        <template x-for="notif in notifications" :key="notif.id">
+          <div class="px-4 py-3 hover:bg-surface-container-high/50 transition-colors"
+            :class="notif.timestamp > lastNotifRead ? 'bg-primary/5' : ''">
+            <div class="flex items-start gap-3">
+              <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
+                :class="{
+                  'bg-primary/15': notif.type === 'recording_start',
+                  'bg-success/15': notif.type === 'recording_end',
+                  'bg-tertiary/15': notif.type === 'merge_done',
+                  'bg-error/15': notif.type === 'error',
+                  'bg-secondary/15': notif.type === 'highlight_detected',
+                  'bg-surface-container-highest': !['recording_start','recording_end','merge_done','error','highlight_detected'].includes(notif.type)
+                }">
+                <span class="material-symbols-outlined text-sm"
+                  :class="{
+                    'text-primary': notif.type === 'recording_start',
+                    'text-success': notif.type === 'recording_end',
+                    'text-tertiary': notif.type === 'merge_done',
+                    'text-error': notif.type === 'error',
+                    'text-secondary': notif.type === 'highlight_detected',
+                    'text-on-surface-variant': !['recording_start','recording_end','merge_done','error','highlight_detected'].includes(notif.type)
+                  }"
+                  x-text="{
+                    'recording_start': 'fiber_manual_record',
+                    'recording_end': 'stop',
+                    'merge_done': 'check_circle',
+                    'error': 'warning',
+                    'highlight_detected': 'bolt',
+                    'clip_generated': 'movie',
+                    'subtitle_generated': 'receipt_long',
+                    'cover_generated': 'video_file'
+                  }[notif.type] || 'info'"></span>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium" x-text="notif.title"></p>
+                <p class="text-xs text-on-surface-variant mt-0.5" x-text="notif.message"></p>
+                <p class="text-[10px] text-on-surface-variant/70 mt-1" x-text="formatNotifTime(notif.timestamp)"></p>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+    <div class="px-4 py-2 border-t border-outline-variant/10 flex justify-between items-center">
+      <button class="text-xs text-on-surface-variant hover:text-primary transition-colors"
+        @click="notifications=[]; unreadNotifCount=0">清空全部</button>
+      <span class="text-[10px] text-on-surface-variant">最多显示 50 条</span>
     </div>
   </div>
 </div>
