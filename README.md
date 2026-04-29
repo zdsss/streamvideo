@@ -6,24 +6,26 @@
 
 | 平台 | 录制引擎 | 状态检测 | 断流阈值 | 备注 |
 |------|---------|---------|---------|------|
-| 抖音直播 | streamlink | webcast API | 30s | ⚠️ 实验性，受平台反爬限制，可能不稳定 |
+| 抖音直播 | streamlink | webcast API | 30s | ⚠️ 实验性，受平台反爬限制 |
 | B站直播 | streamlink | B站 API | 20s | |
 | Twitch | streamlink | streamlink | 20s | |
 | YouTube | streamlink | streamlink | 20s | |
-
-任何 streamlink 支持的平台均可通过粘贴 URL 直接添加（通用 fallback：streamlink → yt-dlp）。
+| 虎牙 | streamlink | streamlink | 20s | |
+| 斗鱼 | streamlink | streamlink | 20s | |
+| Kick | streamlink | streamlink | 20s | |
+| 通用 | streamlink → yt-dlp | streamlink | 20s | 任意 streamlink 支持的平台 |
 
 ## 功能
 
 ### 核心录制
 
 - **多平台录制** — 粘贴 URL 自动识别平台，支持 per-model 画质选择（best / 1080p / 720p / 480p / audio_only）
-- **会话追踪（RecordingSession）** — 每次直播自动创建会话，持久化到 sessions.json + SQLite，断流重连时片段归属同一会话（30 秒内快速重连自动复用会话）
+- **会话追踪（RecordingSession）** — 每次直播自动创建会话，持久化到 sessions.json + SQLite，断流重连时片段归属同一会话
 - **智能合并** — 会话结束后自动合并所有片段为一个 MP4，合并前 ffprobe 校验编码一致性，合并失败 30 秒自动重试
+- **合并撤回** — 自动/手动合并后 72 小时内可撤回，恢复原始分片
 - **断流重连** — 宽限期内自动重连（抖音 90s / 其他 60s），不中断会话
 - **启动恢复** — 服务重启后自动扫描 sessions.json，恢复未完成的会话并触发合并
 - **批量添加** — 输入框支持多行 URL（逗号或换行分隔），一次添加多个主播
-- **Per-model 自动合并开关** — 每个主播可独立开关自动合并
 - **定时录制** — 设置每日录制时间窗口 + 星期选择，支持跨午夜，per-model 独立配置
 
 ### 合并系统
@@ -31,93 +33,58 @@
 - **自动合并** — 直播结束 → 会话标记 ended → 自动触发合并 → 删除原始片段
 - **合并进度** — WebSocket 实时推送合并进度百分比
 - **手动合并** — 按时间间隔分组，支持选择性排除片段
-- **后处理流水线**：
-  - 时间戳修复（ffmpeg +genpts）
-  - 可选智能重命名为 `主播名_日期_时长.mp4`
-  - 可选 H.265 转码（CRF 28）
-  - 可选云端上传（S3 / OSS / rclone）
-- **磁盘空间检查** — 后处理前检查剩余空间，不足则跳过
+- **合并撤回** — 72h 内可一键撤回，删除合并文件并恢复原始分片
+- **后处理流水线**：时间戳修复 → 可选智能重命名 → 可选 H.265 转码 → 可选云端上传
 
-### 通知系统
+### 弹幕采集
 
-- **浏览器桌面通知** — 录制开始 / 结束 / 合并完成
-- **Webhook** — 支持 Discord / Telegram Bot
-- **事件类型** — `recording_start` / `recording_end` / `merge_done` / `error`
-- **测试发送** — 设置面板中一键测试连通性
+- **抖音** — WebSocket 实时弹幕捕获（自动随录制启停）
+- **B站** — WebSocket 协议弹幕抓取（含礼物、SC）
+- **Twitch** — IRC 匿名模式弹幕抓取（无需 OAuth）
+- 弹幕数据保存为 JSON，可用于高光检测和切片叠加
 
 ### 内容资产化（FlashCut）
 
-- **弹幕采集** — 抖音直播实时弹幕捕获
 - **高光检测** — 关键词匹配 + 弹幕密度分析，自动定位精彩时刻
 - **短视频切片** — 竖屏/横屏/方形格式，支持弹幕叠加、水印
 - **字幕生成** — 基于 Whisper 的语音转文字
 - **封面生成** — 自动提取精彩帧作为封面
 
-### 录制韧性
-
-- **可配置断流检测** — 各平台独立阈值，避免误判
-- **指数退避重试** — 网络错误自动退避重试
-- **实时码率监控** — 每 5 秒计算瞬时码率，前端实时显示
-- **编码一致性检查** — 合并前 ffprobe 校验所有片段，不一致则自动重编码
-
 ### Web UI — The Orchestrator
 
-- **Tailwind CSS**（本地构建，28KB）+ 内联 SVG 图标（零外部字体依赖）
-- **窄图标侧边栏**（56px）— Streams / Storage / Network / System / Highlights / Clips
-- **紧凑横向卡片** — 左侧 4:3 缩略图，右侧信息密集排列
-- **文件管理弹窗** — 文件列表 / 录制会话 / 手动合并 / 健康检查 / 高光
-- **Storage 页面** — 磁盘概览、按主播存储占用明细（进度条）、清理建议
-- **Network 页面** — WebSocket / 代理状态、实时带宽、平台连接状态
-- **System 页面** — 版本信息、录制引擎状态、日志查看器
-- **Settings 弹窗** — 全部开关、Webhook 配置、H.265 转码开关
-- **Schedule 弹窗** — 画质选择 + 时间窗口 + 星期选择器
-- **文件管理** — 搜索、排序、批量删除、重命名、下载、CSV 导出
-- **Toast 通知** — 操作反馈
-- **移动端适配** — 底部 Tab 栏
+- **Tailwind CSS**（本地构建）+ Alpine.js 单页应用
+- **Storage 页面** — 会话分组时间线视图、封面缩略图、合并进度条、撤回按钮
+- **Streams 页面** — 紧凑横向卡片，实时码率、合并状态
+- **Network 页面** — WebSocket / 代理状态、实时带宽
+- **System 页面** — 版本信息、录制引擎状态、日志查看器、配置导入/导出
+- **Highlights / Clips 页面** — 高光列表、切片管理、一键分发
 
 ## 技术栈
 
 - **后端**: Python 3 / FastAPI / asyncio / WebSocket
-- **前端**: Alpine.js / Tailwind CSS（本地构建）/ 内联 SVG 图标
-- **存储**: SQLite（主存储）+ JSON（备份）+ sessions.json（会话持久化）
-- **数据库**: database.py，支持从 JSON 自动迁移至 SQLite
-- **录制引擎**: streamlink / yt-dlp / Playwright / ffmpeg
-- **支付**: Stripe（可选，需配置 `STRIPE_SECRET_KEY`）
-- **分发**: 抖音/快手 OAuth API + B站/微信视频号辅助投稿
+- **前端**: Alpine.js / Tailwind CSS（本地构建）
+- **存储**: SQLite（主存储）+ JSON（备份）
+- **录制引擎**: streamlink / yt-dlp / Playwright（抖音）/ ffmpeg
 
 ## 快速开始
 
-### 依赖安装
-
 ```bash
-# Python 依赖
 pip install -r requirements.txt
 playwright install chromium
-
-# 录制工具
 brew install ffmpeg streamlink yt-dlp
-```
 
-### 启动
-
-```bash
 python server.py
 ```
 
 浏览器打开 `http://localhost:8080`，粘贴直播 URL 即可开始。
 
-### Docker 部署
+### Docker
 
 ```bash
 docker build -t streamvideo .
-docker run -d -p 8080:8080 -v $(pwd)/recordings:/app/recordings -v $(pwd)/config.json:/app/config.json streamvideo
-```
-
-可选环境变量：
-```bash
 docker run -d -p 8080:8080 \
-  -e SV_TOKEN=mysecret \
   -v $(pwd)/recordings:/app/recordings \
+  -v $(pwd)/config.json:/app/config.json \
   streamvideo
 ```
 
@@ -125,24 +92,13 @@ docker run -d -p 8080:8080 \
 
 ```bash
 SV_TOKEN=secret python server.py
+# 访问时附加 ?token=secret
 ```
-
-访问时附加 `?token=secret` 参数即可通过认证。
-
-### 代理配置
-
-默认使用 `http://127.0.0.1:7890` 代理（用于需要代理的平台）。抖音、B站等国内平台自动直连。
 
 ### CSS 重新构建
 
 ```bash
 npx tailwindcss@3 -i static/input.css -o static/styles.css --minify
-```
-
-### 运行测试
-
-```bash
-pytest tests/ -v
 ```
 
 ## API
@@ -154,252 +110,63 @@ pytest tests/ -v
 | DELETE | `/api/models/{name}` | 删除主播 |
 | POST | `/api/models/{name}/start` | 启动监控 |
 | POST | `/api/models/{name}/stop` | 停止监控 |
-| POST | `/api/models/{name}/auto-merge` | 切换自动合并 `{"auto_merge": bool}` |
-| POST | `/api/models/{name}/schedule` | 设置定时计划 |
-| GET | `/api/models/{name}/schedule` | 获取定时计划 |
-| POST | `/api/models/{name}/quality` | 设置画质 |
 | GET | `/api/recordings/{name}` | 获取录制文件列表 |
-| GET | `/api/recordings/{name}/groups` | 获取可合并的分组 |
-| GET | `/api/recordings/{name}/export` | CSV 导出录制列表 |
 | POST | `/api/recordings/{name}/merge` | 合并片段 |
-| POST | `/api/recordings/{name}/{file}/rename` | 重命名录制文件 |
-| DELETE | `/api/recordings/{name}/{file}` | 删除录制文件 |
-| GET | `/api/video/{name}/{file}` | 播放 / 下载视频（`?download=1`） |
 | GET | `/api/sessions/{name}` | 获取录制会话列表 |
+| GET | `/api/sessions/{name}/summary` | 会话摘要（Storage 视图用） |
 | POST | `/api/sessions/{name}/{id}/merge` | 合并指定会话 |
+| POST | `/api/sessions/{id}/rollback` | 撤回合并（72h 内有效） |
 | GET | `/api/settings` | 获取设置 |
 | POST | `/api/settings` | 更新设置 |
-| GET | `/api/stats` | 全局录制统计 |
-| GET | `/api/stats/{name}` | 单主播统计 |
+| GET | `/api/config/export` | 导出配置 |
+| POST | `/api/config/import` | 导入配置（mode: merge\|overwrite） |
 | GET | `/api/disk` | 磁盘使用情况 |
 | GET | `/api/storage/breakdown` | 按主播存储占用明细 |
-| GET | `/api/network` | 网络状态（代理、平台、带宽） |
-| GET | `/api/system` | 系统信息（版本、引擎状态） |
-| GET | `/api/logs` | 系统日志（`?limit=N`） |
-| GET | `/api/thumb/{name}` | 主播缩略图 |
-| POST | `/api/webhooks/test` | 测试 Webhook 连通性 |
-| POST | `/api/highlights/{name}/detect` | 触发高光检测 |
-| GET | `/api/highlights/{name}` | 获取高光列表 |
-| POST | `/api/highlights/item/{id}/clip` | 从高光生成切片 |
-| GET | `/api/clips/{name}` | 获取切片列表 |
-| POST | `/api/flashcut/{name}/auto` | FlashCut 全自动流水线 |
-| POST | `/api/auth/register` | 用户注册 `{"email", "password"}` |
-| POST | `/api/auth/login` | 用户登录 |
-| POST | `/api/auth/logout` | 用户注销 |
-| GET | `/api/auth/me` | 获取当前用户信息 |
-| GET | `/api/tiers` | 获取套餐定义 |
-| GET | `/api/quota/{name}` | 查询用户配额 |
-| GET | `/api/quota/{name}/history` | 配额使用历史 |
-| GET | `/api/distribute/platforms` | 可用分发平台 |
-| POST | `/api/distribute` | 创建分发任务 |
-| POST | `/api/distribute/{id}/execute` | 执行分发 |
-| GET | `/api/distribute/tasks` | 分发任务列表 |
 | WS | `/ws` | WebSocket 实时推送 |
 
 ### WebSocket 消息类型
 
 | 类型 | 说明 |
 |------|------|
-| `init` | 连接时推送所有主播状态 |
 | `model_update` | 主播状态变化 |
-| `model_added` / `model_removed` | 主播增删 |
-| `merge_done` | 合并完成（含文件名、大小、片段数） |
-| `merge_error` | 合并失败 |
-| `merge_progress` | 合并进度（progress 0~1） |
+| `merge_done` | 合并完成 |
+| `merge_progress` | 合并进度（0~1） |
+| `auto_merge_done` | 自动合并完成（含 merge_type、72h 撤回提示） |
+| `merge_low_confidence` | 自动合并跳过（信心度过低） |
+| `session_rollback` | 合并撤回完成 |
 | `highlight_detected` | 高光检测完成 |
 | `clip_done` | 切片生成完成 |
-| `settings_update` | 设置变更 |
-
-## 配置项
-
-`config.json` 示例：
-
-```json
-{
-  "auto_merge": true,
-  "merge_gap_minutes": 15,
-  "auto_delete_originals": true,
-  "min_segment_size_kb": 500,
-  "smart_rename": false,
-  "h265_transcode": false,
-  "cloud_upload": false,
-  "webhooks": [
-    {
-      "type": "discord",
-      "url": "https://discord.com/api/webhooks/...",
-      "events": ["recording_start", "recording_end", "merge_done", "error"]
-    }
-  ]
-}
-```
-
-| 配置项 | 说明 |
-|--------|------|
-| `auto_merge` | 录制结束后自动合并同一会话的片段 |
-| `merge_gap_minutes` | 手动合并时，片段间隔超过此值视为不同分组 |
-| `auto_delete_originals` | 合并后自动删除原始片段 |
-| `min_segment_size_kb` | 小于此大小的片段自动清理 |
-| `smart_rename` | 合并后重命名为 `主播名_日期_时长.mp4` |
-| `h265_transcode` | 合并后转码为 H.265（CRF 28） |
-| `cloud_upload` | 合并后上传至云端（S3 / OSS / rclone） |
-| `webhooks` | Webhook 通知配置列表（Discord / Telegram） |
 
 ## 会话生命周期
 
-每次直播自动创建一个 `RecordingSession`，持久化到 sessions.json + SQLite：
-
 ```
-直播开始 → active（录制中，片段持续追加）
-  ↓ 断流
-重连中（宽限期内恢复 → 继续 active）
-  ↓ 30秒内再次上线 → 复用同一会话
+直播开始 → active（录制中）
+  ↓ 断流 → 宽限期内重连 → 继续 active
   ↓ 宽限期超时
-ended → 触发自动合并 → merging → merged
-                         ↓ 失败
-                       error → 30秒后自动重试
-                                ↓ 仍失败
-                              error（可手动重试）
+ended → 自动合并 → merging → merged（72h 内可撤回）
+                    ↓ 失败
+                  error → 30s 后自动重试（最多 3 次）
 ```
 
 ## 项目结构
 
 ```
 server.py          # FastAPI 服务器 + REST API + WebSocket
-recorder.py        # 多平台录制引擎 + 会话追踪 + Webhook + 定时录制
-database.py        # SQLite 数据库模块，支持从 JSON 自动迁移
+recorder.py        # 多平台录制引擎 + 会话追踪 + 弹幕启停
+database.py        # SQLite 数据库模块
+danmaku.py         # 弹幕采集（抖音 WS / B站 WS / Twitch IRC）
 highlight.py       # 高光检测引擎
-danmaku.py         # 弹幕采集
 clipgen.py         # 短视频切片生成
 subtitle_gen.py    # Whisper 语音转字幕
 cover_gen.py       # 封面生成
 quota.py           # 配额管理
-static/index.html  # Web UI（Alpine.js + Tailwind CSS 单页应用）
-static/styles.css  # Tailwind CSS 本地构建产物
-config.json        # 配置文件（主播列表 + 设置 + Webhook + 定时计划）
-payment.py         # Stripe 支付和订阅管理（可选）
+static/index.html  # Web UI（Alpine.js + Tailwind CSS）
+config.json        # 配置文件
 recordings/        # 录制文件输出目录
-  {主播名}/
-    YYYYMMDD_HHMMSS.mp4        # 录制片段
-    YYYYMMDD_HHMMSS_merged.mp4 # 合并后的文件
-    clips/                     # 生成的短视频
-    meta.json                  # 主播元数据缓存
-    sessions.json              # 录制会话记录
-  thumbs/                      # 缩略图缓存
 ```
 
 ## 已知限制
 
-### 抖音直播录制（⚠️ 实验性功能）
-
-抖音录制受平台反爬限制，可能不稳定，建议优先使用 B站/Twitch/YouTube。
-
-- **检测**：使用抖音原生 webcast API（`room/web/enter`），需要 `ttwid` cookie，自动获取并缓存 1 小时
-- **录制**：streamlink 的抖音插件已失效（抖音页面改为纯客户端渲染），系统会自动尝试三级 fallback：
-  1. streamlink（传入 ttwid cookie）
-  2. Playwright 提取流地址 + ffmpeg 直录
-  3. 60 秒冷却后重试
-- **反爬**：抖音 API 需要 `__ac_signature` 签名才能返回流地址，Playwright headless 模式被屏蔽
-- **后续方向**：集成第三方抖音录制库、支持用户导出浏览器 cookie
-
-## 快捷键
-
-- `Ctrl/Cmd + N` — 聚焦添加输入框
-- `Escape` — 关闭弹窗
-- 拖拽 URL 到页面 — 自动添加
-
-## 分发功能
-
-将录制好的短视频切片一键分发到各大平台。
-
-### 支持平台
-
-| 平台 | 模式 | 状态 |
-|------|------|------|
-| 抖音 | OAuth 授权发布 | 🔧 需要开发者资质 |
-| 快手 | OAuth 授权发布 | 🔧 需要开发者资质 |
-| B站 | 辅助投稿 | ✅ 开箱即用 |
-| 微信视频号 | 辅助投稿 | ✅ 开箱即用 |
-
-### 使用流程
-
-**抖音/快手 OAuth 授权**（需要开发者账号）：
-1. 前往 System 页面 → 平台授权
-2. 点击"授权抖音/快手"，完成 OAuth 授权
-3. 在 Clips 页面选择切片 → 点击"分发"
-4. 选择目标平台，填写标题/描述/标签
-5. 点击发布，跟踪分发状态
-
-**B站/微信视频号辅助投稿**（开箱即用）：
-1. 在 Clips 页面选择切片 → 点击"分发"
-2. 选择 B站 或 微信视频号
-3. 填写标题/描述/标签，点击"复制信息并打开投稿页"
-4. 在平台手动粘贴信息并上传视频文件
-
-### 环境变量配置（抖音/快手）
-
-```bash
-# 抖音开放平台（https://open.douyin.com）
-DOUYIN_CLIENT_KEY=your_client_key
-DOUYIN_CLIENT_SECRET=your_client_secret
-DOUYIN_REDIRECT_URI=https://yourdomain.com/api/oauth/douyin/callback
-
-# 快手开放平台（https://open.kuaishou.com）
-KUAISHOU_CLIENT_KEY=your_client_key
-KUAISHOU_CLIENT_SECRET=your_client_secret
-KUAISHOU_REDIRECT_URI=https://yourdomain.com/api/oauth/kuaishou/callback
-```
-
-> 注意：OAuth 回调地址需要 HTTPS 和公网可访问。本地开发可使用 ngrok。
-
-## 商业化套餐
-
-| 功能 | Free | Pro | Team |
-|------|------|-----|------|
-| 价格 | 免费 | $29/月 | $99/月 |
-| 每日切片数 | 3 个 | 50 个 | 无限 |
-| 最高画质 | 720p | 1080p | 1080p |
-| 水印 | 有 | 无 | 无 |
-| 最多主播数 | 3 个 | 20 个 | 无限 |
-| 云端上传 | ❌ | ✅ | ✅ |
-| H.265 转码 | ❌ | ✅ | ✅ |
-| API 访问 | ❌ | ❌ | ✅ |
-
-### 支付配置（Stripe，可选）
-
-```bash
-pip install stripe
-
-STRIPE_SECRET_KEY=sk_live_xxx
-STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_PRICE_PRO=price_xxx
-STRIPE_PRICE_TEAM=price_xxx
-```
-
-```bash
-# 使用 Stripe CLI 测试 Webhook（开发环境）
-stripe listen --forward-to localhost:8080/api/payment/webhook
-```
-
-## API（新增端点）
-
-### OAuth 平台授权
-
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET | `/api/oauth/{platform}/authorize` | 获取授权 URL |
-| GET | `/api/oauth/{platform}/callback` | OAuth 回调（用 code 换 token） |
-| POST | `/api/oauth/{platform}/refresh` | 刷新 Token |
-| DELETE | `/api/oauth/{platform}/revoke` | 撤销授权 |
-| GET | `/api/oauth/{platform}/status` | 查询授权状态 |
-
-支持的 `{platform}`：`douyin`、`kuaishou`（B站/微信视频号为辅助模式，无需授权）
-
-### 支付
-
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET | `/api/payment/tiers` | 获取套餐定义 |
-| POST | `/api/payment/checkout` | 创建 Stripe 支付会话 |
-| POST | `/api/payment/webhook` | Stripe Webhook 回调 |
-| POST | `/api/payment/cancel` | 取消订阅 |
-| GET | `/api/payment/status` | 查询订阅状态 |
+- **抖音录制** ⚠️ 实验性：受平台反爬限制，可能不稳定
+- **分发功能**：抖音/快手需要开发者资质，B站/微信视频号为辅助投稿模式
+- **字幕生成**：需要本地 Whisper 模型，无网络 fallback
