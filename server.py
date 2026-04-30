@@ -7,13 +7,14 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import time
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
@@ -54,6 +55,11 @@ RECORDINGS_DIR = str(BASE_DIR / "recordings")
 PROXY = os.environ.get("SV_PROXY", "http://127.0.0.1:7890")
 CONFIG_FILE = BASE_DIR / "config.json"
 
+# 工具版本缓存（5 分钟 TTL，避免每次 /api/system 都 fork 子进程）
+_tool_versions_cache: dict = {}
+_tool_versions_ts: float = 0.0
+_TOOL_VERSIONS_TTL = 300
+
 # 默认设置
 DEFAULT_SETTINGS = {
     "auto_merge": True,
@@ -89,6 +95,8 @@ DEFAULT_SETTINGS = {
     "disk_warn_critical_mb": 500,
     "disk_warn_error_mb": 5120,
     "disk_warn_warning_mb": 10240,
+    # 防熄屏模式: "always"=始终防熄屏, "recording"=录制时防熄屏, "never"=不干预
+    "prevent_sleep_mode": "recording",
 }
 
 # 运行时设置（从 config.json 加载）
@@ -198,7 +206,7 @@ def load_config():
             db.set_settings(app_settings)
             return data
         except Exception:
-            pass
+            logger.debug("suppressed exception", exc_info=True)
     return {"models": [], **DEFAULT_SETTINGS}
 
 
@@ -333,6 +341,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_session_cleanup_loop())
     # 磁盘空间定时检查（每 5 分钟）
     asyncio.create_task(_disk_check_loop())
+    # 防熄屏守护（每 30 秒动态管理 caffeinate）
+    asyncio.create_task(_sleep_guard_loop())
     # 启动任务队列
     task_queue.start()
 
@@ -495,7 +505,7 @@ async def _do_retention_cleanup(days: int):
                     cleaned += 1
                     cleaned_size += size
             except Exception:
-                pass
+                logger.debug("suppressed exception", exc_info=True)
     if cleaned > 0:
         logger.info(f"Retention cleanup: deleted {cleaned} files ({cleaned_size/1024/1024:.1f} MB) older than {days} days")
 
@@ -1018,7 +1028,7 @@ async def get_network():
             async with session.get("https://httpbin.org/ip", proxy=proxy, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 proxy_ok = resp.status == 200
     except Exception:
-        pass
+        logger.debug("suppressed exception", exc_info=True)
 
     # 各平台连接状态
     platforms = {}
@@ -1053,18 +1063,28 @@ async def get_system():
     """获取系统信息"""
     import platform
     import shutil
-    import subprocess
 
-    def get_version(cmd):
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            return r.stdout.strip().split('\n')[0][:50]
-        except Exception:
-            return None
+    global _tool_versions_cache, _tool_versions_ts
+    if time.time() - _tool_versions_ts > _TOOL_VERSIONS_TTL:
+        def _get_version(cmd):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                return r.stdout.strip().split('\n')[0][:50]
+            except Exception:
+                return None
 
-    ffmpeg_v = get_version(["ffmpeg", "-version"])
-    streamlink_v = get_version(["streamlink", "--version"])
-    ytdlp_v = get_version(["yt-dlp", "--version"])
+        ffmpeg_v = _get_version(["ffmpeg", "-version"])
+        streamlink_v = _get_version(["streamlink", "--version"])
+        ytdlp_v = _get_version(["yt-dlp", "--version"])
+        _tool_versions_cache = {
+            "ffmpeg_version": ffmpeg_v.replace("ffmpeg version ", "") if ffmpeg_v else "-",
+            "ffmpeg_available": shutil.which("ffmpeg") is not None,
+            "streamlink_version": streamlink_v.replace("streamlink ", "") if streamlink_v else "-",
+            "streamlink_available": shutil.which("streamlink") is not None,
+            "ytdlp_version": ytdlp_v or "-",
+            "ytdlp_available": shutil.which("yt-dlp") is not None,
+        }
+        _tool_versions_ts = time.time()
 
     # Playwright check
     pw_available = False
@@ -1073,7 +1093,7 @@ async def get_system():
         importlib.import_module("playwright")
         pw_available = True
     except Exception:
-        pass
+        logger.debug("suppressed exception", exc_info=True)
 
     uptime = ""
     try:
@@ -1087,12 +1107,7 @@ async def get_system():
 
     return JSONResponse({
         "python_version": platform.python_version(),
-        "ffmpeg_version": ffmpeg_v.replace("ffmpeg version ", "") if ffmpeg_v else "-",
-        "ffmpeg_available": shutil.which("ffmpeg") is not None,
-        "streamlink_version": streamlink_v.replace("streamlink ", "") if streamlink_v else "-",
-        "streamlink_available": shutil.which("streamlink") is not None,
-        "ytdlp_version": ytdlp_v or "-",
-        "ytdlp_available": shutil.which("yt-dlp") is not None,
+        **_tool_versions_cache,
         "playwright_available": pw_available,
         "uptime": uptime,
         "models_count": len(manager.recorders),
@@ -1617,20 +1632,51 @@ async def get_thumbnail(username: str):
 
 
 @app.get("/api/video/{username}/{filename}")
-async def get_video(username: str, filename: str, download: int = 0):
+async def get_video(request: Request, username: str, filename: str, download: int = 0):
     if not _safe_username(username):
         return JSONResponse({"error": "invalid username"}, status_code=400)
     if ".." in filename or "/" in filename:
         return JSONResponse({"error": "invalid filename"}, status_code=400)
     video_path = Path(RECORDINGS_DIR) / username / filename
-    if video_path.exists():
-        if download:
-            return FileResponse(
-                str(video_path), media_type="video/mp4",
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    if not video_path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if download:
+        return FileResponse(
+            str(video_path), media_type="video/mp4",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    file_size = video_path.stat().st_size
+    range_header = request.headers.get("Range")
+    if range_header:
+        import re
+        m = re.match(r"bytes=(\d+)-(\d*)", range_header)
+        if m:
+            start = int(m.group(1))
+            end = int(m.group(2)) if m.group(2) else file_size - 1
+            end = min(end, file_size - 1)
+            chunk = end - start + 1
+
+            async def _iter():
+                with open(video_path, "rb") as f:
+                    f.seek(start)
+                    remaining = chunk
+                    while remaining > 0:
+                        data = f.read(min(65536, remaining))
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
+
+            return StreamingResponse(
+                _iter(), status_code=206, media_type="video/mp4",
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(chunk),
+                },
             )
-        return FileResponse(str(video_path), media_type="video/mp4")
-    return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(str(video_path), media_type="video/mp4",
+                        headers={"Accept-Ranges": "bytes"})
 
 
 # ========== 新增 API: 合并取消 / 批量重试 / 健康检查 / 保留策略 / 合并统计 ==========
@@ -1699,7 +1745,7 @@ async def health_check_recordings(username: str):
                 result["duration"] = float(s.get("duration", 0) or 0)
                 result["valid"] = result["duration"] > 0
         except Exception:
-            pass
+            logger.debug("suppressed exception", exc_info=True)
         return result
 
     files = sorted(model_dir.glob("*.mp4"))
@@ -1908,7 +1954,7 @@ async def merge_preview(username: str, req: dict):
                 info["duration"] = float(s.get("duration", 0) or 0)
                 info["valid"] = info["duration"] > 0
         except Exception:
-            pass
+            logger.debug("suppressed exception", exc_info=True)
         segments.append(info)
         total_size += info["size"]
         total_duration += info["duration"]
@@ -2028,6 +2074,125 @@ async def generate_subtitle(username: str, filename: str, req: dict = {}):
         return JSONResponse({"error": "字幕生成失败"}, status_code=500)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/recordings/{username}/{filename}/subtitles")
+async def list_subtitles(username: str, filename: str):
+    """列出录制文件关联的所有字幕文件"""
+    if not _safe_username(username) or ".." in filename or "/" in filename:
+        return JSONResponse({"error": "invalid"}, status_code=400)
+    base = Path(RECORDINGS_DIR) / username / filename
+    stem = base.stem
+    parent = base.parent
+    result = []
+    for f in parent.glob(f"{stem}*.srt"):
+        # 解析语言：video.zh.srt → zh，video.srt → zh（默认）
+        parts = f.stem.split(".")
+        lang = parts[-1] if len(parts) > 1 else "zh"
+        result.append({"file": f.name, "language": lang, "format": "srt"})
+    for f in parent.glob(f"{stem}*.vtt"):
+        parts = f.stem.split(".")
+        lang = parts[-1] if len(parts) > 1 else "zh"
+        result.append({"file": f.name, "language": lang, "format": "vtt"})
+    return JSONResponse({"subtitles": result})
+
+
+@app.get("/api/subtitle/{username}/{filename}")
+async def get_subtitle_file(username: str, filename: str):
+    """获取字幕文件内容（供 <track> 标签使用）"""
+    if not _safe_username(username) or ".." in filename or "/" in filename:
+        return JSONResponse({"error": "invalid"}, status_code=400)
+    path = Path(RECORDINGS_DIR) / username / filename
+    if not path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    media_type = "text/vtt" if filename.endswith(".vtt") else "text/plain"
+    return FileResponse(str(path), media_type=media_type,
+                        headers={"Access-Control-Allow-Origin": "*"})
+
+
+@app.post("/api/recordings/{username}/{filename}/subtitle/translate")
+async def translate_subtitle(username: str, filename: str, req: dict = {}):
+    """翻译字幕文件（调用 Claude Haiku）"""
+    if not _safe_username(username) or ".." in filename or "/" in filename:
+        return JSONResponse({"error": "invalid"}, status_code=400)
+
+    source_file = req.get("source_file", "")
+    target_lang = req.get("target_lang", "en")
+    source_lang = req.get("source_lang", "zh")
+
+    if not source_file or ".." in source_file or "/" in source_file:
+        return JSONResponse({"error": "source_file required"}, status_code=400)
+
+    srt_path = Path(RECORDINGS_DIR) / username / source_file
+    if not srt_path.exists():
+        return JSONResponse({"error": "字幕文件不存在"}, status_code=404)
+
+    api_key = db.get_settings().get("anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "未配置 Anthropic API Key，请在系统设置中添加"}, status_code=503)
+
+    try:
+        from subtitle_translator import SubtitleTranslator
+        translator = SubtitleTranslator(db=db, api_key=api_key)
+        result = await translator.translate_srt(srt_path, target_lang, source_lang)
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/recordings/{username}/{filename}/subtitle/burn")
+async def burn_subtitle(username: str, filename: str, req: dict = {}):
+    """将字幕烧录到视频（生成新文件，不覆盖原文件）"""
+    if not _safe_username(username) or ".." in filename or "/" in filename:
+        return JSONResponse({"error": "invalid"}, status_code=400)
+
+    subtitle_file = req.get("subtitle_file", "")
+    if not subtitle_file or ".." in subtitle_file or "/" in subtitle_file:
+        return JSONResponse({"error": "subtitle_file required"}, status_code=400)
+
+    video_path = Path(RECORDINGS_DIR) / username / filename
+    sub_path = Path(RECORDINGS_DIR) / username / subtitle_file
+    if not video_path.exists():
+        return JSONResponse({"error": "视频文件不存在"}, status_code=404)
+    if not sub_path.exists():
+        return JSONResponse({"error": "字幕文件不存在"}, status_code=404)
+
+    # SRT → ASS（ffmpeg 原生支持转换）
+    stem = video_path.stem
+    output_path = video_path.parent / f"{stem}.burned.mp4"
+    ass_path = sub_path.with_suffix(".ass")
+
+    try:
+        # 先将 SRT 转为 ASS
+        conv = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-i", str(sub_path), str(ass_path),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(conv.wait(), timeout=30)
+
+        # 烧录字幕
+        safe_ass = str(ass_path).replace("\\", "/").replace(":", "\\:")
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
+            "-i", str(video_path),
+            "-vf", f"ass='{safe_ass}'",
+            "-c:a", "copy",
+            "-movflags", "+faststart",
+            str(output_path),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=3600)
+        if proc.returncode != 0:
+            return JSONResponse({"error": stderr.decode()[-500:]}, status_code=500)
+
+        return JSONResponse({"ok": True, "output_file": output_path.name})
+    except asyncio.TimeoutError:
+        return JSONResponse({"error": "烧录超时"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        if ass_path.exists():
+            ass_path.unlink(missing_ok=True)
 
 
 @app.post("/api/post-script/test")
@@ -3196,6 +3361,65 @@ async def import_config(req: dict):
 
 # ========== 启动 ==========
 
+_caffeinate_proc: "subprocess.Popen | None" = None
+
+
+def _stop_caffeinate():
+    global _caffeinate_proc
+    if _caffeinate_proc and _caffeinate_proc.poll() is None:
+        _caffeinate_proc.terminate()
+        _caffeinate_proc = None
+
+
+def _start_caffeinate_proc():
+    global _caffeinate_proc
+    import sys
+    if sys.platform != "darwin":
+        return
+    if _caffeinate_proc and _caffeinate_proc.poll() is None:
+        return  # already running
+    try:
+        _caffeinate_proc = subprocess.Popen(
+            ["caffeinate", "-di"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        pass
+
+
+def _has_active_recordings() -> bool:
+    for rec in manager.recorders.values():
+        if rec.info.state.value in ("recording", "reconnecting"):
+            return True
+    return False
+
+
+async def _sleep_guard_loop():
+    """Poll every 30s and manage caffeinate based on prevent_sleep_mode setting."""
+    import sys
+    if sys.platform != "darwin":
+        return
+    while True:
+        await asyncio.sleep(30)
+        mode = app_settings.get("prevent_sleep_mode", "recording")
+        if mode == "always":
+            _start_caffeinate_proc()
+        elif mode == "recording":
+            if _has_active_recordings():
+                _start_caffeinate_proc()
+            else:
+                _stop_caffeinate()
+        else:  # "never"
+            _stop_caffeinate()
+
+
 if __name__ == "__main__":
     import uvicorn
+
+    mode = app_settings.get("prevent_sleep_mode", "recording")
+    if mode == "always":
+        _start_caffeinate_proc()
+        print("caffeinate: always-on mode, display sleep prevented")
+
     uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")

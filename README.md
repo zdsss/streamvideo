@@ -101,6 +101,14 @@ SV_TOKEN=secret python server.py
 npx tailwindcss@3 -i static/input.css -o static/styles.css --minify
 ```
 
+### 字幕翻译
+
+```bash
+ANTHROPIC_API_KEY=sk-... python server.py
+```
+
+字幕翻译通过 `subtitle_translator.py` 调用 Claude Haiku，支持 SRT 文件批量翻译，结果自动缓存到数据库。
+
 ## API
 
 | 方法 | 端点 | 说明 |
@@ -151,18 +159,19 @@ ended → 自动合并 → merging → merged（72h 内可撤回）
 ## 项目结构
 
 ```
-server.py          # FastAPI 服务器 + REST API + WebSocket
-recorder.py        # 多平台录制引擎 + 会话追踪 + 弹幕启停
-database.py        # SQLite 数据库模块
-danmaku.py         # 弹幕采集（抖音 WS / B站 WS / Twitch IRC）
-highlight.py       # 高光检测引擎
-clipgen.py         # 短视频切片生成
-subtitle_gen.py    # Whisper 语音转字幕
-cover_gen.py       # 封面生成
-quota.py           # 配额管理
-static/index.html  # Web UI（Alpine.js + Tailwind CSS）
-config.json        # 配置文件
-recordings/        # 录制文件输出目录
+server.py               # FastAPI 服务器 + REST API + WebSocket
+recorder.py             # 多平台录制引擎 + 会话追踪 + 弹幕启停
+database.py             # SQLite 数据库模块
+danmaku.py              # 弹幕采集（抖音 WS / B站 WS / Twitch IRC）
+highlight.py            # 高光检测引擎
+clipgen.py              # 短视频切片生成
+subtitle_gen.py         # Whisper 语音转字幕
+subtitle_translator.py  # Claude Haiku 字幕翻译（支持 7 种语言，带缓存）
+cover_gen.py            # 封面生成
+quota.py                # 配额管理
+static/index.html       # Web UI（Alpine.js + Tailwind CSS）
+config.json             # 配置文件
+recordings/             # 录制文件输出目录
 ```
 
 ## 已知限制
@@ -170,3 +179,4 @@ recordings/        # 录制文件输出目录
 - **抖音录制** ⚠️ 实验性：受平台反爬限制，可能不稳定
 - **分发功能**：抖音/快手需要开发者资质，B站/微信视频号为辅助投稿模式
 - **字幕生成**：需要本地 Whisper 模型，无网络 fallback
+- **字幕翻译**：需配置 `ANTHROPIC_API_KEY`，使用 Claude Haiku，支持中/英/日/韩/法/德/西班牙语互译

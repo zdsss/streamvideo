@@ -6,6 +6,7 @@ playwright>=1.40.0
 psutil>=5.9.0
 
 # 可选
+anthropic>=0.30.0   # 字幕翻译（需配置 ANTHROPIC_API_KEY）
 # openai-whisper    # 语音字幕（需要 GPU 加速）
 # stripe>=5.0.0     # 支付功能，需配置 STRIPE_SECRET_KEY
 

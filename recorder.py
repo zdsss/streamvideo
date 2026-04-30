@@ -507,7 +507,7 @@ class BaseLiveRecorder:
                         self.info.username, int(free/1024/1024), False))
                 return "warning"
         except Exception:
-            pass
+            logger.debug("suppressed exception", exc_info=True)
         return "ok"
 
     async def _notify(self):
@@ -515,7 +515,7 @@ class BaseLiveRecorder:
             try:
                 await self.on_state_change(self.info)
             except Exception:
-                pass
+                logger.debug("suppressed exception", exc_info=True)
 
     def _get_http_session(self) -> aiohttp.ClientSession:
         """获取共享 HTTP 会话，避免每次请求创建新连接"""
@@ -710,7 +710,7 @@ class BaseLiveRecorder:
                                     asyncio.ensure_future(self._manager.webhook.notify("disk_low", {
                                         "username": self.info.username, "free_mb": int(free/1024/1024)}))
                         except Exception:
-                            pass
+                            logger.debug("suppressed exception", exc_info=True)
 
                         # 追加片段到当前会话
                         if self._current_session:
@@ -1279,7 +1279,7 @@ class DouyinRecorder(BaseLiveRecorder):
                     try:
                         await page.goto(self._get_stream_url(), timeout=15000)
                     except Exception:
-                        pass
+                        logger.debug("suppressed exception", exc_info=True)
 
                     # 等待流地址出现（最多 15 秒）
                     for _ in range(30):
@@ -1404,7 +1404,7 @@ class BilibiliRecorder(BaseLiveRecorder):
                                 logger.info(f"[{self.info.username}] Bilibili streamer: {name}")
                                 self._save_meta()
                 except Exception:
-                    pass
+                    logger.debug("suppressed exception", exc_info=True)
 
             if live_status == 1:
                 return ModelStatus.PUBLIC, int(self.room_id), viewers
@@ -1623,7 +1623,7 @@ class GenericRecorder(BaseLiveRecorder):
             if data.get("streams"):
                 return ModelStatus.PUBLIC, None, 0
         except Exception:
-            pass
+            logger.debug("suppressed exception", exc_info=True)
 
         # 策略2: yt-dlp（短超时 8s）
         if self._manager and self._manager._ytdlp_available:
@@ -1636,7 +1636,7 @@ class GenericRecorder(BaseLiveRecorder):
                 if proc.returncode == 0 and stdout.strip():
                     return ModelStatus.PUBLIC, None, 0
             except Exception:
-                pass
+                logger.debug("suppressed exception", exc_info=True)
 
         return ModelStatus.OFFLINE, None, 0
 
@@ -2190,7 +2190,7 @@ class RecorderManager:
                                 "segments": len(session.segments),
                             })
                         except Exception:
-                            pass
+                            logger.debug("suppressed exception", exc_info=True)
                         if hasattr(self, '_merge_callback') and self._merge_callback:
                             try:
                                 await self._merge_callback(username, session.session_id,
@@ -2198,7 +2198,7 @@ class RecorderManager:
                                                            error=session.merge_error or "超过最大重试次数",
                                                            retry_count=session.retry_count)
                             except Exception:
-                                pass
+                                logger.debug("suppressed exception", exc_info=True)
                         continue
                     # 过滤：只保留存在且足够大的片段
                     valid = []
@@ -2287,7 +2287,7 @@ class RecorderManager:
                                                            skip_reason=skip_reason,
                                                            files=valid)
                             except Exception:
-                                pass
+                                logger.debug("suppressed exception", exc_info=True)
                         continue
                     elif confidence < 0.7:
                         logger.info(f"[{username}] Session {session.session_id}: medium confidence ({confidence:.2f}), auto-merging (smart mode)")
@@ -2555,7 +2555,7 @@ class RecorderManager:
             except asyncio.CancelledError:
                 return
             except Exception:
-                pass
+                logger.debug("suppressed exception", exc_info=True)
 
         async def monitor_progress():
             while not progress_stop.is_set():
@@ -2587,7 +2587,7 @@ class RecorderManager:
                             f"合并 {len(filenames)} 个片段{eta_str}"
                         )
                 except Exception:
-                    pass
+                    logger.debug("suppressed exception", exc_info=True)
                 try:
                     await asyncio.wait_for(progress_stop.wait(), timeout=2)
                     break
@@ -2712,7 +2712,7 @@ class RecorderManager:
                     if p.exists():
                         p.unlink()
                 except Exception:
-                    pass
+                    logger.debug("suppressed exception", exc_info=True)
         except Exception as e:
             progress_stop.set()
             if not merge_ok and output_path.exists():
@@ -2792,7 +2792,7 @@ class RecorderManager:
                 try:
                     p.unlink()
                 except Exception:
-                    pass
+                    logger.debug("suppressed exception", exc_info=True)
         self._active_merges[merge_id] = {"status": "cancelled", "error": "用户取消"}
         logger.info(f"Merge cancelled: {merge_id}")
         return True
@@ -2836,7 +2836,7 @@ class RecorderManager:
                 logger.warning(f"Post-process skipped: insufficient disk space ({disk_free/1024/1024:.0f}MB free, need {file_size*1.1/1024/1024:.0f}MB)")
                 return
         except Exception:
-            pass
+            logger.debug("suppressed exception", exc_info=True)
         fixed_path = file_path.with_suffix(".fixed.mp4")
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -2875,7 +2875,7 @@ class RecorderManager:
                 logger.warning(f"[{username}] Transcode skipped: insufficient disk space")
                 return
         except Exception:
-            pass
+            logger.debug("suppressed exception", exc_info=True)
 
         h265_path = file_path.with_suffix(".h265.mp4")
         logger.info(f"[{username}] Transcoding to H.265: {file_path.name} ({file_size/1024/1024:.0f}MB)...")
@@ -3029,7 +3029,7 @@ class RecorderManager:
                             if dp.exists():
                                 danmaku_path = dp
                     except Exception:
-                        pass
+                        logger.debug("suppressed exception", exc_info=True)
 
             highlights = await detector.detect(video_path, danmaku_path)
             if not highlights:
@@ -3176,7 +3176,7 @@ class RecorderManager:
             try:
                 return self.db.get_sessions(username)
             except Exception:
-                pass
+                logger.debug("suppressed exception", exc_info=True)
         # fallback: JSON
         sessions_path = Path(self.output_dir) / username / "sessions.json"
         if sessions_path.exists():
@@ -3184,7 +3184,7 @@ class RecorderManager:
                 with open(sessions_path) as f:
                     return json.load(f)
             except Exception:
-                pass
+                logger.debug("suppressed exception", exc_info=True)
         return []
 
     def update_session_status(self, username: str, session_id: str, status: str, **kwargs):
@@ -3197,7 +3197,7 @@ class RecorderManager:
                     db_sessions = self.db.get_sessions(username)
                     sessions = [RecordingSession.from_dict(s) for s in db_sessions]
                 except Exception:
-                    pass
+                    logger.debug("suppressed exception", exc_info=True)
             if not sessions:
                 sessions_path = Path(self.output_dir) / username / "sessions.json"
                 if sessions_path.exists():
