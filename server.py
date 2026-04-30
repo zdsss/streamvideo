@@ -13,7 +13,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -27,6 +27,20 @@ from task_queue import task_queue, Priority
 def _safe_username(username: str) -> bool:
     """验证 username 不含路径遍历字符"""
     return ".." not in username and "/" not in username and "\\" not in username and username.strip() != ""
+
+
+def validate_username(username: str) -> str:
+    """FastAPI dependency: 验证 username 路径安全"""
+    if not _safe_username(username):
+        raise HTTPException(status_code=400, detail="Invalid username")
+    return username
+
+
+def validate_filename(filename: str) -> str:
+    """FastAPI dependency: 验证 filename 路径安全"""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    return filename
 
 # 日志
 logging.basicConfig(

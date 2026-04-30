@@ -7,6 +7,7 @@ SQLite 数据库模块 — 替代 JSON 文件存储
 import json
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -100,6 +101,7 @@ def init_db(db_path: str = DB_PATH):
         );
         CREATE INDEX IF NOT EXISTS idx_danmaku_session ON danmaku(session_id);
         CREATE INDEX IF NOT EXISTS idx_danmaku_username ON danmaku(username);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_danmaku_session_username ON danmaku(session_id, username);
 
         CREATE TABLE IF NOT EXISTS highlights (
             highlight_id TEXT PRIMARY KEY,
@@ -210,6 +212,18 @@ def init_db(db_path: str = DB_PATH):
         );
         CREATE INDEX IF NOT EXISTS idx_merge_queue_username ON merge_queue(username);
         CREATE INDEX IF NOT EXISTS idx_merge_queue_status ON merge_queue(status);
+
+        CREATE TABLE IF NOT EXISTS translation_cache (
+            text_hash   TEXT NOT NULL,
+            source_lang TEXT NOT NULL,
+            target_lang TEXT NOT NULL,
+            translated  TEXT NOT NULL,
+            model       TEXT DEFAULT '',
+            hit_count   INTEGER DEFAULT 0,
+            created_at  REAL DEFAULT (strftime('%s','now')),
+            PRIMARY KEY (text_hash, source_lang, target_lang)
+        );
+        CREATE INDEX IF NOT EXISTS idx_translation_cache ON translation_cache(text_hash, source_lang, target_lang);
 
         CREATE TABLE IF NOT EXISTS platform_credentials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -645,7 +659,7 @@ class Database:
             conn.execute("""
                 INSERT INTO danmaku (session_id, username, file_path, message_count, peak_density, keywords_found)
                 VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
+                ON CONFLICT(session_id, username) DO UPDATE SET
                     file_path=excluded.file_path, message_count=excluded.message_count,
                     peak_density=excluded.peak_density, keywords_found=excluded.keywords_found
             """, (session_id, username, file_path, message_count, peak_density,
@@ -1290,5 +1304,40 @@ class Database:
             )
             conn.commit()
             return cur.rowcount
+        finally:
+            conn.close()
+
+    # ========== Translation Cache ==========
+
+    def get_translation_cache(self, text: str, source_lang: str, target_lang: str) -> Optional[str]:
+        import hashlib
+        h = hashlib.sha256(f"{source_lang}:{target_lang}:{text}".encode()).hexdigest()
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT translated FROM translation_cache WHERE text_hash=? AND source_lang=? AND target_lang=?",
+                (h, source_lang, target_lang)
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE translation_cache SET hit_count=hit_count+1 WHERE text_hash=? AND source_lang=? AND target_lang=?",
+                    (h, source_lang, target_lang)
+                )
+                conn.commit()
+                return row["translated"]
+            return None
+        finally:
+            conn.close()
+
+    def set_translation_cache(self, text: str, source_lang: str, target_lang: str, translated: str, model: str = ""):
+        import hashlib
+        h = hashlib.sha256(f"{source_lang}:{target_lang}:{text}".encode()).hexdigest()
+        conn = self._conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO translation_cache (text_hash, source_lang, target_lang, translated, model) VALUES (?,?,?,?,?)",
+                (h, source_lang, target_lang, translated, model)
+            )
+            conn.commit()
         finally:
             conn.close()

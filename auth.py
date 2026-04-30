@@ -3,6 +3,7 @@
 兼容原有 SV_TOKEN 单 token 模式
 """
 
+import bcrypt
 import hashlib
 import logging
 import secrets
@@ -14,21 +15,26 @@ logger = logging.getLogger("auth")
 SESSION_DURATION = 7 * 24 * 3600  # 7 天
 
 
-def _hash_password(password: str, salt: str = "") -> str:
-    """SHA-256 密码哈希"""
-    if not salt:
-        salt = secrets.token_hex(16)
-    h = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
-    return f"{salt}:{h}"
+def _hash_password(password: str) -> str:
+    """bcrypt 密码哈希"""
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def _verify_password(password: str, stored_hash: str) -> bool:
-    """验证密码"""
-    parts = stored_hash.split(":", 1)
-    if len(parts) != 2:
+    """验证密码，支持旧格式（SHA256）和新格式（bcrypt）迁移"""
+    # 检测旧格式：salt:hash
+    if ":" in stored_hash and len(stored_hash.split(":")) == 2:
+        # 旧格式 SHA256 验证
+        parts = stored_hash.split(":", 1)
+        salt = parts[0]
+        h = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
+        return f"{salt}:{h}" == stored_hash
+
+    # 新格式 bcrypt 验证
+    try:
+        return bcrypt.checkpw(password.encode(), stored_hash.encode())
+    except Exception:
         return False
-    salt = parts[0]
-    return _hash_password(password, salt) == stored_hash
 
 
 class AuthManager:
@@ -86,6 +92,12 @@ class AuthManager:
             user_id, db_email, display_name, password_hash, role = row
             if not _verify_password(password, password_hash):
                 raise ValueError("邮箱或密码错误")
+
+            # 密码迁移：如果使用旧格式（SHA256），重新哈希为 bcrypt
+            if ":" in password_hash and len(password_hash.split(":")) == 2:
+                new_hash = _hash_password(password)
+                conn.execute("UPDATE users SET password_hash = ? WHERE user_id = ?", (new_hash, user_id))
+                logger.info(f"Migrated password hash for user: {email}")
 
             # 创建 session
             session_token = secrets.token_urlsafe(32)

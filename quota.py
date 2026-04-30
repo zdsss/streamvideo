@@ -100,12 +100,6 @@ class QuotaManager:
                 conn.execute("UPDATE user_tiers SET tier = 'free' WHERE username = ?", (username,))
                 conn.commit()
                 return "free"
-            # 若 Stripe 订阅状态异常，降级到 free
-            sub_row = conn.execute(
-                "SELECT subscription_status FROM users WHERE user_id = ?", (username,)
-            ).fetchone()
-            if sub_row and (sub_row[0] or "") in ("past_due", "cancelled", "unpaid"):
-                return "free"
             return tier
         except Exception:
             return "free"
