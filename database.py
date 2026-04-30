@@ -3,6 +3,13 @@ SQLite 数据库模块 — 替代 JSON 文件存储
 表: settings, models, sessions
 支持从 JSON 自动迁移
 """
+import warnings as _warnings
+_warnings.warn(
+    "database.py is deprecated, use streamvideo.infrastructure.database.database instead",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 
 import json
 import logging

@@ -3,13 +3,6 @@
 从视频提取关键帧 + 添加标题/主播名文字叠加
 支持基于高光时刻选帧、多候选帧评分、多尺寸输出
 """
-import warnings as _warnings
-_warnings.warn(
-    "cover_gen.py is deprecated, use streamvideo.core.processor.cover_gen instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 import asyncio
 import json

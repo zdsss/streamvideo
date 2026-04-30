@@ -2,13 +2,6 @@
 支付模块 — Stripe 订阅管理
 支持 Free / Pro / Team 套餐的订阅、续费、取消
 """
-import warnings as _warnings
-_warnings.warn(
-    "payment.py is deprecated, use streamvideo.core.auth.payment instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 import logging
 import os
 import time

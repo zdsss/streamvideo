@@ -4,13 +4,6 @@
 - HTTP 轮询降级
 - 独立 asyncio.Task 运行，不阻塞录制
 """
-import warnings as _warnings
-_warnings.warn(
-    "danmaku.py is deprecated, use streamvideo.core.processor.danmaku instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 import asyncio
 import json

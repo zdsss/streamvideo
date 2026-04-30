@@ -2,13 +2,6 @@
 用户认证模块 — 注册/登录/Session 管理
 兼容原有 SV_TOKEN 单 token 模式
 """
-import warnings as _warnings
-_warnings.warn(
-    "auth.py is deprecated, use streamvideo.core.auth.manager instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 import bcrypt
 import hashlib

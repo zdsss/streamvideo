@@ -5,6 +5,13 @@
 - yt-dlp / streamlink / Playwright 多引擎录制
 - 自动重连 + 宽限期 + 自动合并
 """
+import warnings as _warnings
+_warnings.warn(
+    "recorder.py is deprecated, use streamvideo.core.recorder instead",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 
 import asyncio
 import json

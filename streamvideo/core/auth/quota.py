@@ -4,13 +4,6 @@ free: 3 clips/day + 水印 + 720p 最高
 pro: 50 clips/day + 无水印 + 1080p + 优先处理
 team: 无限 + 无水印 + 1080p + 多账号 + API 访问
 """
-import warnings as _warnings
-_warnings.warn(
-    "quota.py is deprecated, use streamvideo.core.auth.quota instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 import logging
 import time

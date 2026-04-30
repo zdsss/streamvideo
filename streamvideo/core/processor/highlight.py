@@ -2,13 +2,6 @@
 高光检测引擎 — 纯 ffmpeg 方案
 信号源：音频音量峰值 + 场景切换 + 静音边界 + 弹幕密度 + 弹幕关键词 + 礼物事件
 """
-import warnings as _warnings
-_warnings.warn(
-    "highlight.py is deprecated, use streamvideo.core.processor.highlight instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 import asyncio
 import json

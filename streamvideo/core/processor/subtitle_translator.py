@@ -1,13 +1,6 @@
 """
 字幕翻译模块 — 调用 Claude Haiku API，批量翻译 SRT 字幕
 """
-import warnings as _warnings
-_warnings.warn(
-    "subtitle_translator.py is deprecated, use streamvideo.core.processor.subtitle_translator instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 import asyncio
 import hashlib

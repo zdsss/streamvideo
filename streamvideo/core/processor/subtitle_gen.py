@@ -2,13 +2,6 @@
 语音字幕引擎 — 基于 OpenAI Whisper 本地模型
 生成 SRT/ASS/VTT 字幕文件，用于 ffmpeg 烧录到短视频
 """
-import warnings as _warnings
-_warnings.warn(
-    "subtitle_gen.py is deprecated, use streamvideo.core.processor.subtitle_gen instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 import asyncio
 import logging

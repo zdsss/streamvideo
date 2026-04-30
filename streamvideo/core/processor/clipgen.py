@@ -1,13 +1,6 @@
 """
 片段生成引擎 — ffmpeg 切割 + 格式转换 + 弹幕字幕 + 水印
 """
-import warnings as _warnings
-_warnings.warn(
-    "clipgen.py is deprecated, use streamvideo.core.processor.clipgen instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 import asyncio
 import json

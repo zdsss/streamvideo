@@ -2,13 +2,6 @@
 分发模块 — 管理视频发布到各短视频平台
 支持：抖音、快手、小红书、B站（按 API 可用性逐步接入）
 """
-import warnings as _warnings
-_warnings.warn(
-    "distribute.py is deprecated, use streamvideo.core.distributor.manager instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 import asyncio
 import json

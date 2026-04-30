@@ -2,13 +2,6 @@
 Async task queue for StreamVideo post-processing tasks.
 Supports priority levels, concurrency limits, and progress tracking.
 """
-import warnings as _warnings
-_warnings.warn(
-    "task_queue.py is deprecated, use streamvideo.infrastructure.messaging.task_queue instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 import asyncio
 import time
 import uuid
