@@ -51,7 +51,7 @@ class ClipGenerator:
         speech_ass_path = None
         if auto_subtitle:
             try:
-                from subtitle_gen import SubtitleGenerator, is_whisper_available
+                from streamvideo.core.processor.subtitle_gen import SubtitleGenerator, is_whisper_available
                 if is_whisper_available():
                     # 先切出临时片段用于语音识别（避免对整个长视频做 STT）
                     temp_clip = clips_dir / f".{clip_id}_temp.mp4"
@@ -97,7 +97,7 @@ class ClipGenerator:
                 cover_path = None
                 if auto_cover:
                     try:
-                        from cover_gen import CoverGenerator
+                        from streamvideo.core.processor.cover_gen import CoverGenerator
                         cover_gen = CoverGenerator()
                         title = highlight.get("title", "")
                         cover_path = await cover_gen.generate(output_file, title, username, clips_dir)

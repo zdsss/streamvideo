@@ -178,7 +178,7 @@ async def create_manual_clip(req: dict):
     if not video_path.exists():
         return JSONResponse({"error": f"文件不存在: {filename}"}, status_code=404)
 
-    from quota import QuotaManager
+    from streamvideo.core.auth.quota import QuotaManager
     qm = QuotaManager(db)
     allowed, used, limit = qm.check_quota(username)
     if not allowed:
@@ -209,7 +209,7 @@ async def create_manual_clip(req: dict):
         danmaku_path = dp
         break
 
-    from clipgen import ClipGenerator, ClipConfig
+    from streamvideo.core.processor.clipgen import ClipGenerator, ClipConfig
     config = ClipConfig(
         resolution=req.get("resolution", app_settings.get("clip_resolution", "1080x1920")),
         format=req.get("format", app_settings.get("clip_format", "vertical")),
@@ -325,7 +325,7 @@ async def export_clip_local(clip_id: str, req: dict = {}):
 @router.get("/api/quota/{username}")
 async def get_quota(username: str):
     """查询用户配额（完整套餐信息）"""
-    from quota import QuotaManager
+    from streamvideo.core.auth.quota import QuotaManager
     qm = QuotaManager(db)
     info = qm.get_tier_info(username)
     info["username"] = username
@@ -335,7 +335,7 @@ async def get_quota(username: str):
 @router.get("/api/quota/{username}/history")
 async def get_quota_history(username: str, days: int = 30):
     """查询使用历史"""
-    from quota import QuotaManager
+    from streamvideo.core.auth.quota import QuotaManager
     qm = QuotaManager(db)
     return JSONResponse(qm.get_usage_history(username, days))
 
@@ -343,14 +343,14 @@ async def get_quota_history(username: str, days: int = 30):
 @router.get("/api/tiers")
 async def get_tier_definitions():
     """获取所有套餐定义"""
-    from quota import QuotaManager
+    from streamvideo.core.auth.quota import QuotaManager
     return JSONResponse(QuotaManager.get_tier_definitions())
 
 
 @router.post("/api/tier/{username}")
 async def set_tier(username: str, req: dict):
     """设置用户等级"""
-    from quota import QuotaManager
+    from streamvideo.core.auth.quota import QuotaManager
     tier = req.get("tier", "free")
     expires_at = req.get("expires_at", 0)
     qm = QuotaManager(db)

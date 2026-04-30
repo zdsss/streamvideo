@@ -20,7 +20,7 @@ def _get_payment_manager():
     global _payment_manager
     if _payment_manager is None:
         try:
-            from payment import PaymentManager
+            from streamvideo.core.auth.payment import PaymentManager
             _payment_manager = PaymentManager(db)
         except ImportError:
             _payment_manager = None
@@ -33,7 +33,7 @@ async def payment_tiers():
     pm = _get_payment_manager()
     if not pm:
         return JSONResponse({"error": "payment module not available"}, status_code=503)
-    from payment import TIER_FEATURES
+    from streamvideo.core.auth.payment import TIER_FEATURES
     return JSONResponse({"tiers": TIER_FEATURES})
 
 

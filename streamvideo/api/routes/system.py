@@ -94,7 +94,7 @@ async def get_system():
 async def check_whisper():
     """检查 Whisper 是否可用"""
     try:
-        from subtitle_gen import is_whisper_available
+        from streamvideo.core.processor.subtitle_gen import is_whisper_available
         available = is_whisper_available()
         return JSONResponse({"available": available})
     except Exception:

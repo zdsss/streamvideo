@@ -2,6 +2,7 @@
 from typing import Optional
 
 
+from pathlib import Path
 class DistributeMixin:
     def upsert_distribute_task(self, task: dict):
         conn = self._conn()

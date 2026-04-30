@@ -2,6 +2,7 @@
 from typing import Optional
 
 
+import json
 class ModelMixin:
     def get_models(self) -> list[dict]:
         conn = self._conn()

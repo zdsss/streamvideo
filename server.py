@@ -19,9 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 
-from recorder import ModelInfo, RecorderManager, RecordingSession, RecordingState
-from database import Database
-from task_queue import task_queue, Priority
+from streamvideo.core.recorder import ModelInfo, RecorderManager, RecordingSession, RecordingState
+from streamvideo.infrastructure.database.database import Database
+from streamvideo.infrastructure.messaging.task_queue import task_queue, Priority
 
 
 def _safe_username(username: str) -> bool:
@@ -455,7 +455,7 @@ async def _session_cleanup_loop():
     while True:
         await asyncio.sleep(3600)
         try:
-            from auth import AuthManager
+            from streamvideo.core.auth.manager import AuthManager
             AuthManager(db).cleanup_expired_sessions()
         except Exception as e:
             logger.error(f"Session cleanup error: {e}")

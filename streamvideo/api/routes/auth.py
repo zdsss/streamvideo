@@ -8,7 +8,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 @router.post("/register")
 async def auth_register(req: dict):
     """用户注册"""
-    from auth import AuthManager
+    from streamvideo.core.auth.manager import AuthManager
     from server import db
 
     am = AuthManager(db)
@@ -27,7 +27,7 @@ async def auth_register(req: dict):
 @router.post("/login")
 async def auth_login(req: dict):
     """用户登录"""
-    from auth import AuthManager
+    from streamvideo.core.auth.manager import AuthManager
     from server import db
 
     am = AuthManager(db)
@@ -44,7 +44,7 @@ async def auth_login(req: dict):
 @router.post("/logout")
 async def auth_logout(req: dict):
     """用户注销"""
-    from auth import AuthManager
+    from streamvideo.core.auth.manager import AuthManager
     from server import db
 
     am = AuthManager(db)
@@ -56,8 +56,8 @@ async def auth_logout(req: dict):
 @router.get("/me")
 async def auth_me(request: Request):
     """获取当前用户信息"""
-    from auth import AuthManager
-    from quota import QuotaManager
+    from streamvideo.core.auth.manager import AuthManager
+    from streamvideo.core.auth.quota import QuotaManager
     from server import db
 
     am = AuthManager(db)
@@ -75,7 +75,7 @@ async def auth_me(request: Request):
 @router.get("/users")
 async def auth_users():
     """获取所有用户（管理员）"""
-    from auth import AuthManager
+    from streamvideo.core.auth.manager import AuthManager
     from server import db
 
     am = AuthManager(db)

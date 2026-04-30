@@ -35,7 +35,7 @@ async def detect_highlights(username: str, req: dict = {}):
         return JSONResponse({"error": f"文件不存在: {filename}"}, status_code=404)
 
     try:
-        from highlight import HighlightDetector
+        from streamvideo.core.processor.highlight import HighlightDetector
         import uuid as _uuid
 
         config = {k: v for k, v in app_settings.items() if k.startswith("highlight_")}
@@ -90,7 +90,7 @@ async def delete_highlight(highlight_id: str):
 @router.post("/highlights/item/{highlight_id}/clip")
 async def generate_clip_from_highlight(highlight_id: str, req: dict = {}):
     from server import db, broadcast, app_settings, RECORDINGS_DIR
-    from quota import QuotaManager
+    from streamvideo.core.auth.quota import QuotaManager
 
     h = db.get_highlight(highlight_id)
     if not h:
@@ -111,7 +111,7 @@ async def generate_clip_from_highlight(highlight_id: str, req: dict = {}):
         if dp.exists():
             danmaku_path = dp
 
-    from clipgen import ClipGenerator, ClipConfig
+    from streamvideo.core.processor.clipgen import ClipGenerator, ClipConfig
     config = ClipConfig(
         resolution=req.get("resolution", app_settings.get("clip_resolution", "1080x1920")),
         format=req.get("format", app_settings.get("clip_format", "vertical")),
@@ -138,8 +138,8 @@ async def generate_clip_from_highlight(highlight_id: str, req: dict = {}):
 @router.post("/highlights/batch-clip")
 async def batch_generate_clips(req: dict):
     from server import db, broadcast, app_settings, RECORDINGS_DIR
-    from quota import QuotaManager
-    from clipgen import ClipGenerator, ClipConfig
+    from streamvideo.core.auth.quota import QuotaManager
+    from streamvideo.core.processor.clipgen import ClipGenerator, ClipConfig
 
     highlight_ids = req.get("highlight_ids", [])
     if not highlight_ids:
@@ -315,7 +315,7 @@ async def get_clip_analytics(username: str = ""):
 @router.post("/clips/manual")
 async def create_manual_clip(req: dict):
     from server import db, broadcast, app_settings, RECORDINGS_DIR
-    from quota import QuotaManager
+    from streamvideo.core.auth.quota import QuotaManager
 
     username = req.get("username", "")
     filename = req.get("filename", "")
@@ -355,7 +355,7 @@ async def create_manual_clip(req: dict):
         danmaku_path = dp
         break
 
-    from clipgen import ClipGenerator, ClipConfig
+    from streamvideo.core.processor.clipgen import ClipGenerator, ClipConfig
     config = ClipConfig(
         resolution=req.get("resolution", app_settings.get("clip_resolution", "1080x1920")),
         format=req.get("format", app_settings.get("clip_format", "vertical")),

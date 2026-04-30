@@ -439,7 +439,7 @@ class BaseLiveRecorder:
                         try:
                             session_id = self._current_session.session_id if self._current_session else ""
                             if self.platform == "douyin":
-                                from danmaku import DanmakuCapture
+                                from streamvideo.core.processor.danmaku import DanmakuCapture
                                 self._danmaku = DanmakuCapture(
                                     room_id=getattr(self, 'room_id', self.identifier),
                                     username=self.info.username,
@@ -448,7 +448,7 @@ class BaseLiveRecorder:
                                     session_id=session_id,
                                 )
                             elif self.platform == "bilibili":
-                                from danmaku import BilibiliDanmakuCapture
+                                from streamvideo.core.processor.danmaku import BilibiliDanmakuCapture
                                 self._danmaku = BilibiliDanmakuCapture(
                                     room_id=getattr(self, 'room_id', self.identifier),
                                     username=self.info.username,
@@ -456,7 +456,7 @@ class BaseLiveRecorder:
                                     session_id=session_id,
                                 )
                             elif self.platform == "twitch":
-                                from danmaku import TwitchDanmakuCapture
+                                from streamvideo.core.processor.danmaku import TwitchDanmakuCapture
                                 self._danmaku = TwitchDanmakuCapture(
                                     channel=self.identifier,
                                     username=self.info.username,

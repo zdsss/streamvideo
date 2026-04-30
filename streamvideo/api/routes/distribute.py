@@ -24,7 +24,7 @@ def _get_distribute_manager():
     """获取分发管理器单例"""
     global _distribute_manager
     if _distribute_manager is None:
-        from distribute import (DistributeManager, MockPublisher,
+        from streamvideo.core.distributor.manager import (DistributeManager, MockPublisher,
                                 DouyinPublisher, KuaishouPublisher,
                                 BilibiliAssistPublisher, WeixinVideoPublisher)
         _distribute_manager = DistributeManager(db)
@@ -128,7 +128,7 @@ def _get_request_user_id(request: Optional[Request]) -> str:
     if not token:
         return "default"
     try:
-        from auth import AuthManager
+        from streamvideo.core.auth.manager import AuthManager
         user = AuthManager(db).validate_session(token)
         return user["user_id"] if user else "default"
     except Exception:

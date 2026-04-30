@@ -17,6 +17,7 @@ import aiohttp
 
 logger = logging.getLogger("recorder")
 
+from streamvideo.core.recorder.models import *
 from streamvideo.core.recorder.base import BaseLiveRecorder
 
 class HuyaRecorder(BaseLiveRecorder):

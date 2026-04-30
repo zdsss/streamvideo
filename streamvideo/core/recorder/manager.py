@@ -30,6 +30,18 @@ from streamvideo.core.recorder.engines.douyu import DouyuRecorder
 from streamvideo.core.recorder.engines.kick import KickRecorder
 from streamvideo.core.recorder.engines.generic import GenericRecorder
 
+PLATFORM_CLASSES = {
+    "douyin": DouyinRecorder,
+    "bilibili": BilibiliRecorder,
+    "twitch": TwitchRecorder,
+    "youtube": YouTubeRecorder,
+    "huya": HuyaRecorder,
+    "douyu": DouyuRecorder,
+    "kick": KickRecorder,
+    "generic": GenericRecorder,
+}
+
+
 class RecorderManager:
     """管理多个主播的录制器"""
 
@@ -1126,7 +1138,7 @@ class RecorderManager:
     async def _detect_highlights(self, username: str, video_path: Path, session_id: str = ""):
         """运行高光检测并存入数据库"""
         try:
-            from highlight import HighlightDetector
+            from streamvideo.core.processor.highlight import HighlightDetector
             config = getattr(self, '_highlight_config', {})
             detector = HighlightDetector(config)
 
@@ -1198,7 +1210,7 @@ class RecorderManager:
             await _broadcast(f"检测到 {len(new_highlights)} 个高光，正在生成短视频...")
 
             # 2. 配额检查
-            from quota import QuotaManager
+            from streamvideo.core.auth.quota import QuotaManager
             quota_mgr = QuotaManager(self.db)
             allowed, used, limit = quota_mgr.check_quota(username)
             force_watermark = quota_mgr.should_watermark(username)
@@ -1212,7 +1224,7 @@ class RecorderManager:
                     danmaku_path = dp
 
             # 4. 逐个生成片段
-            from clipgen import ClipGenerator, ClipConfig
+            from streamvideo.core.processor.clipgen import ClipGenerator, ClipConfig
             config = ClipConfig(
                 resolution=self._highlight_config.get("clip_resolution", "1080x1920"),
                 format=self._highlight_config.get("clip_format", "vertical"),

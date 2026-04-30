@@ -65,21 +65,21 @@ function _ri(root){
       el.appendChild(s);
       el._rendered=true;
     }
+    el.style.visibility='visible';
   });
 }
 // 延迟执行 + MutationObserver，确保 Alpine.js 动态渲染的元素也能被处理
 document.addEventListener('DOMContentLoaded',()=>{
-  setTimeout(()=>_ri(), 100);
-  setTimeout(()=>_ri(), 500);
-  setTimeout(()=>_ri(), 1500);
+  _ri();
   let _riPending=false;
   new MutationObserver(()=>{ if(!_riPending){_riPending=true; requestAnimationFrame(()=>{_ri();_riPending=false;});} }).observe(document.body,{childList:true,subtree:true});
 });
 </script>
 <style>
-.material-symbols-outlined { display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
+.material-symbols-outlined { display: inline-flex; align-items: center; justify-content: center; overflow: hidden; visibility: hidden; }
 .mso-fill svg { fill: currentColor; }
 [x-cloak] { display: none !important; }
+body[x-cloak] { visibility: hidden !important; display: block !important; }
 .pulse-red { animation: pulse-red 2s infinite; }
 @keyframes pulse-red {
   0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255,180,171,0.7); }
@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 </style>
 </head>
 <body class="bg-surface-dim text-on-surface font-body selection:bg-primary-container selection:text-on-primary-container"
-  x-data="app()" x-init="init()" @keydown.window="handleKey($event)"
+  x-data="app()" x-init="init()" x-cloak @keydown.window="handleKey($event)"
   @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false"
   @drop.prevent="handleDrop($event)">
 
@@ -170,6 +170,54 @@ document.addEventListener('DOMContentLoaded',()=>{
     </div>
   </div>
 </nav>
+
+<!-- ===== TRANSLATE SUBTITLE DIALOG ===== -->
+<div class="fixed inset-0 z-[160] flex items-center justify-center" x-show="showTranslateDialog" x-cloak @click.self="showTranslateDialog=false">
+  <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showTranslateDialog=false"></div>
+  <div class="relative bg-surface-container rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-5 flex flex-col gap-4">
+    <h3 class="text-sm font-semibold">翻译字幕</h3>
+    <p class="text-xs text-on-surface-variant truncate" x-text="translateDialogFile"></p>
+    <!-- 选择字幕源文件 -->
+    <div>
+      <label class="text-xs text-on-surface-variant mb-1 block">字幕文件</label>
+      <select class="w-full text-xs bg-surface-container-highest rounded-lg px-3 py-2 border border-outline-variant/30" x-model="translateSourceFile">
+        <template x-for="s in translateAvailableSubs" :key="s.file">
+          <option :value="s.file" x-text="s.file + ' (' + s.language + ')'"></option>
+        </template>
+        <option value="" x-show="translateAvailableSubs.length===0">暂无字幕，请先生成</option>
+      </select>
+    </div>
+    <!-- 目标语言 -->
+    <div>
+      <label class="text-xs text-on-surface-variant mb-1 block">目标语言（翻译）</label>
+      <select class="w-full text-xs bg-surface-container-highest rounded-lg px-3 py-2 border border-outline-variant/30" x-model="translateTargetLang">
+        <option value="">无（不翻译，直接烧录）</option>
+        <option value="zh">中文</option>
+        <option value="en">英文</option>
+        <option value="ja">日文</option>
+        <option value="ko">韩文</option>
+        <option value="fr">法文</option>
+        <option value="de">德文</option>
+        <option value="es">西班牙文</option>
+      </select>
+    </div>
+    <div class="flex gap-2 justify-end">
+      <button class="text-xs px-4 py-2 rounded-lg hover:bg-surface-container-highest" @click="showTranslateDialog=false">取消</button>
+      <button class="text-xs px-4 py-2 rounded-lg border border-outline-variant/30 hover:bg-surface-container-highest disabled:opacity-50"
+        :disabled="translateLoading"
+        @click="doBurnSubtitle()">
+        <span x-show="!translateLoading">烧录到视频</span>
+        <span x-show="translateLoading">处理中...</span>
+      </button>
+      <button x-show="translateTargetLang" class="text-xs px-4 py-2 rounded-lg bg-primary text-on-primary hover:opacity-90 disabled:opacity-50"
+        :disabled="translateLoading"
+        @click="doTranslateSubtitle()">
+        <span x-show="!translateLoading">翻译</span>
+        <span x-show="translateLoading">翻译中...</span>
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- ===== MERGE QUEUE DRAWER ===== -->
 <div class="fixed inset-0 z-[150]" x-show="showMergeQueue" x-cloak @click.self="showMergeQueue=false">
@@ -354,7 +402,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   </div>
   <button class="bg-gradient-to-br from-primary-container to-primary px-5 rounded-lg flex items-center gap-2 font-bold text-sm text-on-primary-container shadow-lg shadow-primary-container/20 hover:scale-[1.02] active:scale-95 transition-all shrink-0"
     @click="addModel()" :disabled="addingModel">
-    <span x-show="addingModel" class="material-symbols-outlined anim-spin text-base">progress_activity</span>
+    <span x-show="addingModel" x-cloak class="material-symbols-outlined anim-spin text-base">progress_activity</span>
     <span x-show="!addingModel" class="material-symbols-outlined text-base">add</span>
     添加
   </button>
@@ -608,8 +656,18 @@ document.addEventListener('DOMContentLoaded',()=>{
         <div x-show="storageExpandedUser===item.username" x-cloak class="border-t border-outline-variant/10 bg-surface-container-low">
           <!-- 内联播放器 -->
           <div x-show="storagePlayingVideo" class="p-3 bg-black">
-            <video class="w-full max-h-64 rounded-lg" controls :src="storagePlayingVideo" @click.stop></video>
-            <button class="mt-1 text-[10px] text-on-surface-variant hover:text-on-surface" @click.stop="storagePlayingVideo=null">关闭播放器</button>
+            <video class="w-full max-h-64 rounded-lg" controls
+              x-ref="storageVideoPlayer"
+              :src="storagePlayingVideo"
+              @click.stop
+              x-effect="if(storagePlayingVideo && storagePlayingSubtitles.length) $nextTick(()=>loadSubtitleTracks($refs.storageVideoPlayer, storagePlayingSubtitles, storagePlayingUser))">
+            </video>
+            <div class="flex items-center gap-3 mt-1">
+              <button class="text-[10px] text-on-surface-variant hover:text-on-surface" @click.stop="storagePlayingVideo=null;storagePlayingSubtitles=[]">关闭播放器</button>
+              <template x-if="storagePlayingSubtitles.length">
+                <span class="text-[10px] text-[#00b894]" x-text="'字幕: '+storagePlayingSubtitles.map(s=>s.language).join(' / ')"></span>
+              </template>
+            </div>
           </div>
           <!-- 加载中 -->
           <div x-show="storageFilesLoading" class="flex items-center justify-center py-4 text-on-surface-variant text-xs">
@@ -651,7 +709,7 @@ document.addEventListener('DOMContentLoaded',()=>{
                         <template x-if="sess.status==='merged' && sess.merged_file">
                           <div class="flex items-center gap-1">
                             <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all"
-                              @click.stop="storagePlayingVideo='/api/video/'+item.username+'/'+sess.merged_file" title="播放">
+                              @click.stop="playWithSubtitles(item.username, sess.merged_file)" title="播放">
                               <span class="material-symbols-outlined text-sm">play_arrow</span>
                             </button>
                             <a class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-primary transition-all"
@@ -660,7 +718,11 @@ document.addEventListener('DOMContentLoaded',()=>{
                             </a>
                             <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-[#00b894] transition-all"
                               @click.stop="generateSubtitle(item.username, sess.merged_file)" title="生成字幕">
-                              <span class="material-symbols-outlined text-sm">receipt_long</span>
+                              <span class="material-symbols-outlined text-sm">closed_caption</span>
+                            </button>
+                            <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-[#6c5ce7] transition-all"
+                              @click.stop="openTranslateDialog(item.username, sess.merged_file)" title="翻译/烧录字幕">
+                              <span class="material-symbols-outlined text-sm">translate</span>
                             </button>
                             <template x-if="sess.rollback_deadline && Date.now()/1000 < sess.rollback_deadline && sess.original_segments?.length > 0">
                               <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-warning transition-all"
@@ -692,7 +754,7 @@ document.addEventListener('DOMContentLoaded',()=>{
                       <template x-for="f in (sess.status==='merged' && sess.merged_file ? [{filename:sess.merged_file, size:sess.total_size, thumbnail_url: sess.merged_info?.thumbnail_url||''}] : sess.segments)" :key="f.filename">
                         <div class="flex items-center gap-2 px-6 py-1.5 hover:bg-surface-container/30 transition-colors">
                           <div class="flex-shrink-0 w-10 h-7 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center cursor-pointer"
-                            @click.stop="storagePlayingVideo='/api/video/'+item.username+'/'+f.filename">
+                            @click.stop="playWithSubtitles(item.username, f.filename)">
                             <img x-show="f.thumbnail_url" :src="f.thumbnail_url" class="w-full h-full object-cover" loading="lazy"/>
                             <span x-show="!f.thumbnail_url" class="material-symbols-outlined text-on-surface-variant text-xs">video_file</span>
                           </div>
@@ -704,6 +766,14 @@ document.addEventListener('DOMContentLoaded',()=>{
                             :href="'/api/video/'+item.username+'/'+f.filename+'?download=1'" @click.stop title="下载">
                             <span class="material-symbols-outlined text-xs">download</span>
                           </a>
+                          <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-[#00b894] transition-all"
+                            @click.stop="generateSubtitle(item.username, f.filename)" title="生成字幕">
+                            <span class="material-symbols-outlined text-xs">closed_caption</span>
+                          </button>
+                          <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-[#6c5ce7] transition-all"
+                            @click.stop="openTranslateDialog(item.username, f.filename)" title="翻译字幕">
+                            <span class="material-symbols-outlined text-xs">translate</span>
+                          </button>
                         </div>
                       </template>
                     </div>
@@ -717,7 +787,7 @@ document.addEventListener('DOMContentLoaded',()=>{
                 <template x-for="f in storageFiles" :key="f.filename">
                   <div class="flex items-center gap-2 px-5 py-2 hover:bg-surface-container/50 transition-colors">
                     <div class="flex-shrink-0 w-12 h-8 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center cursor-pointer"
-                      @click.stop="storagePlayingVideo='/api/video/'+item.username+'/'+f.filename">
+                      @click.stop="playWithSubtitles(item.username, f.filename)">
                       <img x-show="f.thumbnail_url" :src="f.thumbnail_url" class="w-full h-full object-cover" loading="lazy"/>
                       <span x-show="!f.thumbnail_url" class="material-symbols-outlined text-on-surface-variant text-sm">video_file</span>
                     </div>
@@ -731,7 +801,11 @@ document.addEventListener('DOMContentLoaded',()=>{
                     </a>
                     <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-[#00b894] transition-all"
                       @click.stop="generateSubtitle(item.username, f.filename)" title="生成字幕">
-                      <span class="material-symbols-outlined text-sm">receipt_long</span>
+                      <span class="material-symbols-outlined text-sm">closed_caption</span>
+                    </button>
+                    <button class="p-1 hover:bg-surface-container-highest rounded text-on-surface-variant hover:text-[#6c5ce7] transition-all"
+                      @click.stop="openTranslateDialog(item.username, f.filename)" title="翻译字幕">
+                      <span class="material-symbols-outlined text-sm">translate</span>
                     </button>
                   </div>
                 </template>
@@ -1684,12 +1758,21 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 <!-- ===== SETTINGS MODAL ===== -->
 <div class="fixed inset-0 z-[100] flex items-center justify-center bg-surface-dim/60 backdrop-blur-xl" x-show="showSettings" x-cloak @click.self="showSettings=false">
-  <div class="w-full max-w-[480px] bg-surface-container rounded-xl shadow-2xl overflow-hidden border border-outline-variant/15" @click.stop>
-    <div class="px-6 py-5 border-b border-outline-variant/15 flex justify-between items-center bg-surface-container-high/50">
+  <div class="w-full max-w-[480px] bg-surface-container rounded-xl shadow-2xl overflow-hidden border border-outline-variant/15 max-h-[88vh] flex flex-col" @click.stop>
+    <div class="px-6 py-5 border-b border-outline-variant/15 flex justify-between items-center bg-surface-container-high/50 flex-shrink-0">
       <div><h3 class="text-lg font-bold tracking-tight">设置</h3><p class="text-xs text-on-surface-variant">录制管道与存储配置</p></div>
       <button class="text-on-surface-variant hover:text-on-surface p-1 rounded-full hover:bg-surface-container-highest transition-colors" @click="showSettings=false"><span class="material-symbols-outlined">close</span></button>
     </div>
-    <div class="p-6 space-y-6">
+    <div class="flex-1 overflow-y-auto custom-scrollbar" x-data="{sOpen:{rec:true,adv:false,post:false,highlight:false,webhook:false,storage:false}}">
+      <div class="p-6 space-y-1">
+
+      <!-- ── 录制基础 ── -->
+      <div class="border border-outline-variant/15 rounded-xl overflow-hidden">
+        <button class="w-full flex items-center justify-between px-4 py-3 bg-surface-container-high/50 hover:bg-surface-container-highest/50 transition-colors" @click="sOpen.rec=!sOpen.rec">
+          <span class="text-sm font-semibold">录制基础</span>
+          <span class="material-symbols-outlined text-base text-on-surface-variant transition-transform" :class="sOpen.rec?'rotate-180':''">expand_more</span>
+        </button>
+        <div x-show="sOpen.rec" x-cloak class="px-4 py-4 space-y-5">
       <!-- Auto Merge -->
       <div class="flex items-center justify-between">
         <div class="max-w-[70%]"><h4 class="text-sm font-semibold">自动合并</h4><p class="text-xs text-on-surface-variant">录制结束后自动合并同一会话的片段</p></div>
@@ -1704,7 +1787,21 @@ document.addEventListener('DOMContentLoaded',()=>{
           <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.auto_delete_originals?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
         </button>
       </div>
-      <!-- Dropdowns -->
+      <!-- Smart Rename -->
+      <div class="flex items-center justify-between">
+        <div class="max-w-[70%]"><h4 class="text-sm font-semibold">智能重命名</h4><p class="text-xs text-on-surface-variant">合并后重命名为 主播名_日期_时长.mp4</p></div>
+        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="settings.smart_rename?'bg-primary-container':'bg-surface-container-highest'" @click="updateSetting('smart_rename',!settings.smart_rename)">
+          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.smart_rename?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
+        </button>
+      </div>
+      <!-- H.265 -->
+      <div class="flex items-center justify-between">
+        <div class="max-w-[70%]"><h4 class="text-sm font-semibold">H.265 转码</h4><p class="text-xs text-on-surface-variant">合并后自动转码为 H.265，节省约 50% 空间（耗时较长）</p></div>
+        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="settings.h265_transcode?'bg-primary-container':'bg-surface-container-highest'" @click="updateSetting('h265_transcode',!settings.h265_transcode)">
+          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.h265_transcode?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
+        </button>
+      </div>
+      <!-- Merge Gap / Min Size -->
       <div class="grid grid-cols-2 gap-4">
         <div class="space-y-2">
           <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">合并间隔阈值</label>
@@ -1719,194 +1816,214 @@ document.addEventListener('DOMContentLoaded',()=>{
           </select>
         </div>
       </div>
-      <!-- Smart Rename -->
-      <div class="flex items-center justify-between">
-        <div class="max-w-[70%]"><h4 class="text-sm font-semibold">智能重命名</h4><p class="text-xs text-on-surface-variant">合并后重命名为 主播名_日期_时长.mp4</p></div>
-        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="settings.smart_rename?'bg-primary-container':'bg-surface-container-highest'" @click="updateSetting('smart_rename',!settings.smart_rename)">
-          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.smart_rename?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
+        </div>
+      </div>
+
+      <!-- ── 高级阈值 ── -->
+      <div class="border border-outline-variant/15 rounded-xl overflow-hidden">
+        <button class="w-full flex items-center justify-between px-4 py-3 bg-surface-container-high/50 hover:bg-surface-container-highest/50 transition-colors" @click="sOpen.adv=!sOpen.adv">
+          <span class="text-sm font-semibold">高级阈值</span>
+          <span class="material-symbols-outlined text-base text-on-surface-variant transition-transform" :class="sOpen.adv?'rotate-180':''">expand_more</span>
         </button>
-      </div>
-      <!-- H.265 转码 -->
-      <div class="flex items-center justify-between">
-        <div class="max-w-[70%]"><h4 class="text-sm font-semibold">H.265 转码</h4><p class="text-xs text-on-surface-variant">合并后自动转码为 H.265，节省约 50% 空间（耗时较长）</p></div>
-        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="settings.h265_transcode?'bg-primary-container':'bg-surface-container-highest'" @click="updateSetting('h265_transcode',!settings.h265_transcode)">
-          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.h265_transcode?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
-        </button>
-      </div>
-      <!-- Advanced: Merge Timeout / Reuse Window / Retention -->
-      <div class="grid grid-cols-3 gap-3">
-        <div class="space-y-2">
-          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">合并超时</label>
-          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.merge_timeout_minutes||240" @change="updateSetting('merge_timeout_minutes',parseInt($event.target.value))">
-            <option value="60">1 小时</option><option value="120">2 小时</option><option value="240">4 小时</option><option value="480">8 小时</option><option value="720">12 小时</option>
-          </select>
-        </div>
-        <div class="space-y-2">
-          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">会话复用</label>
-          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.session_reuse_seconds||30" @change="updateSetting('session_reuse_seconds',parseInt($event.target.value))">
-            <option value="10">10 秒</option><option value="30">30 秒</option><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">120 秒</option><option value="180">180 秒</option><option value="300">300 秒</option>
-          </select>
-        </div>
-        <div class="space-y-2">
-          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">自动清理</label>
-          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.retention_days||0" @change="updateSetting('retention_days',parseInt($event.target.value))">
-            <option value="0">不清理</option><option value="7">7 天</option><option value="14">14 天</option><option value="30">30 天</option><option value="60">60 天</option><option value="90">90 天</option>
-          </select>
-        </div>
-        <div class="space-y-2">
-          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">磁盘预警阈值</label>
-          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.disk_warn_warning_mb||10240" @change="updateSetting('disk_warn_warning_mb',parseInt($event.target.value))">
-            <option value="5120">预警 5 GB</option><option value="10240">预警 10 GB</option><option value="20480">预警 20 GB</option><option value="51200">预警 50 GB</option>
-          </select>
-        </div>
-      </div>
-      <!-- Phase 3: 自动分割 + 录后脚本 + 文件名模板 -->
-      <div class="grid grid-cols-2 gap-3">
-        <div class="space-y-2">
-          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">按大小分割</label>
-          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.split_by_size_mb||0" @change="updateSetting('split_by_size_mb',parseInt($event.target.value))">
-            <option value="0">禁用</option><option value="1024">1 GB</option><option value="2048">2 GB</option><option value="4096">4 GB</option><option value="8192">8 GB</option>
-          </select>
-        </div>
-        <div class="space-y-2">
-          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">按时长分割</label>
-          <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.split_by_duration_minutes||0" @change="updateSetting('split_by_duration_minutes',parseInt($event.target.value))">
-            <option value="0">禁用</option><option value="60">1 小时</option><option value="120">2 小时</option><option value="180">3 小时</option><option value="240">4 小时</option><option value="360">6 小时</option>
-          </select>
-        </div>
-      </div>
-      <div class="space-y-2">
-        <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">文件名模板</label>
-        <input class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="{username}_{date}_{duration}_merged" :value="settings.filename_template||''" @change="updateSetting('filename_template',$event.target.value)"/>
-        <p class="text-[10px] text-on-surface-variant/60">变量: {username} {platform} {date} {time} {datetime} {duration} {segments} {quality}</p>
-      </div>
-      <div class="space-y-2">
-        <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">录后脚本</label>
-        <div class="flex gap-2">
-          <input class="flex-1 bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="脚本路径（留空禁用）" :value="settings.post_process_script||''" @change="updateSetting('post_process_script',$event.target.value)"/>
-          <button class="px-3 h-10 rounded-md bg-surface-container-highest text-xs font-bold text-on-surface-variant hover:text-primary" @click="testPostScript()">测试</button>
-        </div>
-        <p class="text-[10px] text-on-surface-variant/60">环境变量: SV_USERNAME, SV_FILE_PATH, SV_PLATFORM, SV_EVENT</p>
-      </div>
-      <!-- 配置导入导出 -->
-      <div class="flex gap-2">
-        <button class="flex-1 h-9 rounded-md bg-surface-container-highest text-xs font-bold text-on-surface-variant hover:text-primary" @click="exportConfig()">导出配置</button>
-        <label class="flex-1 h-9 rounded-md bg-surface-container-highest text-xs font-bold text-on-surface-variant hover:text-primary flex items-center justify-center cursor-pointer">
-          导入配置
-          <input type="file" accept=".json" class="hidden" @change="importConfig($event)"/>
-        </label>
-      </div>
-      <div class="h-px bg-outline-variant/15"></div>
-      <!-- V2.0: 高光检测 + 片段设置 -->
-      <div class="space-y-3">
-        <h4 class="text-sm font-semibold">高光检测</h4>
-        <div class="grid grid-cols-2 gap-3">
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" class="rounded border-outline-variant text-primary focus:ring-primary" :checked="settings.danmaku_capture" @change="updateSetting('danmaku_capture', $event.target.checked)"/>
-            <span class="text-xs">弹幕抓取</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" class="rounded border-outline-variant text-primary focus:ring-primary" :checked="settings.highlight_auto_detect" @change="updateSetting('highlight_auto_detect', $event.target.checked)"/>
-            <span class="text-xs">合并后自动检测</span>
-          </label>
-        </div>
-        <div class="space-y-2">
-          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">关键词（逗号分隔）</label>
-          <input class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="(settings.highlight_keywords||[]).join(', ')" @change="updateSetting('highlight_keywords', $event.target.value.split(',').map(s=>s.trim()).filter(Boolean))"/>
-        </div>
-        <div class="grid grid-cols-3 gap-3">
-          <div class="space-y-1">
-            <label class="text-[10px] text-on-surface-variant">最低分数</label>
-            <input type="number" min="0" max="1" step="0.1" class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.highlight_min_score||0.6" @change="updateSetting('highlight_min_score', parseFloat($event.target.value))"/>
-          </div>
-          <div class="space-y-1">
-            <label class="text-[10px] text-on-surface-variant">最短(秒)</label>
-            <input type="number" min="5" max="300" class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.highlight_min_duration||15" @change="updateSetting('highlight_min_duration', parseInt($event.target.value))"/>
-          </div>
-          <div class="space-y-1">
-            <label class="text-[10px] text-on-surface-variant">最长(秒)</label>
-            <input type="number" min="10" max="600" class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.highlight_max_duration||60" @change="updateSetting('highlight_max_duration', parseInt($event.target.value))"/>
-          </div>
-        </div>
-      </div>
-      <div class="space-y-3">
-        <h4 class="text-sm font-semibold">片段生成</h4>
-        <div class="grid grid-cols-2 gap-3">
-          <div class="space-y-1">
-            <label class="text-[10px] text-on-surface-variant">画面比例</label>
-            <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.clip_format||'vertical'" @change="updateSetting('clip_format', $event.target.value)">
-              <option value="vertical">竖屏 9:16</option><option value="horizontal">横屏 16:9</option><option value="square">方形 1:1</option>
-            </select>
-          </div>
-          <div class="space-y-1">
-            <label class="text-[10px] text-on-surface-variant">分辨率</label>
-            <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.clip_resolution||'1080x1920'" @change="updateSetting('clip_resolution', $event.target.value)">
-              <option value="1080x1920">1080x1920</option><option value="720x1280">720x1280</option><option value="1920x1080">1920x1080</option><option value="1080x1080">1080x1080</option>
-            </select>
-          </div>
-        </div>
-        <div class="space-y-2">
-          <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">水印文本</label>
-          <input class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="留空不加水印" :value="settings.clip_watermark||''" @change="updateSetting('clip_watermark', $event.target.value)"/>
-        </div>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" class="rounded border-outline-variant text-primary focus:ring-primary" :checked="settings.clip_danmaku_overlay" @change="updateSetting('clip_danmaku_overlay', $event.target.checked)"/>
-          <span class="text-xs">弹幕字幕叠加</span>
-        </label>
-      </div>
-      <div class="h-px bg-outline-variant/15"></div>
-      <!-- Webhook 配置 -->
-      <div class="space-y-3">
-        <div class="flex items-center justify-between">
-          <h4 class="text-sm font-semibold">Webhook 通知</h4>
-          <button class="text-xs text-primary font-medium hover:underline" @click="settings.webhooks = [...(settings.webhooks||[]), {type:'generic',url:'',events:['recording_start','recording_end','merge_done','error']}]">+ 添加</button>
-        </div>
-        <template x-for="(wh, wi) in (settings.webhooks||[])" :key="wi">
-          <div class="bg-surface-container-low rounded-lg p-3 space-y-2 border border-outline-variant/10">
-            <div class="flex items-center gap-2">
-              <select class="flex-none bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary w-24" x-model="wh.type">
-                <option value="discord">Discord</option>
-                <option value="telegram">Telegram</option>
+        <div x-show="sOpen.adv" x-cloak class="px-4 py-4">
+          <div class="grid grid-cols-2 gap-3">
+            <div class="space-y-2">
+              <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">合并超时</label>
+              <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.merge_timeout_minutes||240" @change="updateSetting('merge_timeout_minutes',parseInt($event.target.value))">
+                <option value="60">1 小时</option><option value="120">2 小时</option><option value="240">4 小时</option><option value="480">8 小时</option><option value="720">12 小时</option>
               </select>
-              <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Webhook URL" x-model="wh.url"/>
-              <button class="text-on-surface-variant hover:text-error text-xs p-1" @click="settings.webhooks.splice(wi,1); updateSetting('webhooks', settings.webhooks)">
-                <span class="material-symbols-outlined text-sm">close</span>
-              </button>
             </div>
-            <template x-if="wh.type==='telegram'">
-              <div class="flex gap-2">
-                <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Bot Token" x-model="wh.bot_token"/>
-                <input class="w-28 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Chat ID" x-model="wh.chat_id"/>
-              </div>
-            </template>
-            <div class="flex items-center gap-2">
-              <button class="text-[10px] px-2 py-0.5 rounded font-bold transition-all" :class="wh.events?.includes('recording_start')?'bg-primary/20 text-primary':'bg-surface-container-highest text-on-surface-variant'" @click="wh.events?.includes('recording_start')?wh.events.splice(wh.events.indexOf('recording_start'),1):wh.events.push('recording_start')">录制</button>
-              <button class="text-[10px] px-2 py-0.5 rounded font-bold transition-all" :class="wh.events?.includes('merge_done')?'bg-primary/20 text-primary':'bg-surface-container-highest text-on-surface-variant'" @click="wh.events?.includes('merge_done')?wh.events.splice(wh.events.indexOf('merge_done'),1):wh.events.push('merge_done')">合并</button>
-              <button class="text-[10px] px-2 py-0.5 rounded font-bold transition-all" :class="wh.events?.includes('error')?'bg-error/20 text-error':'bg-surface-container-highest text-on-surface-variant'" @click="wh.events?.includes('error')?wh.events.splice(wh.events.indexOf('error'),1):wh.events.push('error')">错误</button>
-              <div class="flex-1"></div>
-              <button class="text-[10px] px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant hover:text-primary font-bold" @click="testWebhook(wh)">测试</button>
-              <button class="text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary font-bold" @click="updateSetting('webhooks', settings.webhooks)">保存</button>
+            <div class="space-y-2">
+              <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">会话复用</label>
+              <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.session_reuse_seconds||30" @change="updateSetting('session_reuse_seconds',parseInt($event.target.value))">
+                <option value="10">10 秒</option><option value="30">30 秒</option><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">120 秒</option><option value="180">180 秒</option><option value="300">300 秒</option>
+              </select>
+            </div>
+            <div class="space-y-2">
+              <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">自动清理</label>
+              <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.retention_days||0" @change="updateSetting('retention_days',parseInt($event.target.value))">
+                <option value="0">不清理</option><option value="7">7 天</option><option value="14">14 天</option><option value="30">30 天</option><option value="60">60 天</option><option value="90">90 天</option>
+              </select>
+            </div>
+            <div class="space-y-2">
+              <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">磁盘预警阈值</label>
+              <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.disk_warn_warning_mb||10240" @change="updateSetting('disk_warn_warning_mb',parseInt($event.target.value))">
+                <option value="5120">预警 5 GB</option><option value="10240">预警 10 GB</option><option value="20480">预警 20 GB</option><option value="51200">预警 50 GB</option>
+              </select>
+            </div>
+            <div class="space-y-2">
+              <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">防熄屏</label>
+              <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.prevent_sleep_mode||'recording'" @change="updateSetting('prevent_sleep_mode',$event.target.value)">
+                <option value="recording">录制时防熄屏</option>
+                <option value="always">始终防熄屏</option>
+                <option value="never">不干预（系统默认）</option>
+              </select>
             </div>
           </div>
-        </template>
+        </div>
       </div>
-      <div class="h-px bg-outline-variant/15"></div>
-      <!-- Storage Status -->
-      <div class="bg-surface-container-low rounded-xl p-4 border border-outline-variant/10">
-        <div class="flex justify-between items-center mb-3">
-          <div class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-lg">storage</span><span class="text-sm font-bold">存储状态</span></div>
-          <span class="text-xs font-mono text-on-surface-variant" x-text="fmtSize(diskInfo.free_bytes)+' 可用'"></span>
+
+      <!-- ── 后处理 ── -->
+      <div class="border border-outline-variant/15 rounded-xl overflow-hidden">
+        <button class="w-full flex items-center justify-between px-4 py-3 bg-surface-container-high/50 hover:bg-surface-container-highest/50 transition-colors" @click="sOpen.post=!sOpen.post">
+          <span class="text-sm font-semibold">后处理 & 分割</span>
+          <span class="material-symbols-outlined text-base text-on-surface-variant transition-transform" :class="sOpen.post?'rotate-180':''">expand_more</span>
+        </button>
+        <div x-show="sOpen.post" x-cloak class="px-4 py-4 space-y-4">
+          <div class="grid grid-cols-2 gap-3">
+            <div class="space-y-2">
+              <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">按大小分割</label>
+              <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.split_by_size_mb||0" @change="updateSetting('split_by_size_mb',parseInt($event.target.value))">
+                <option value="0">禁用</option><option value="1024">1 GB</option><option value="2048">2 GB</option><option value="4096">4 GB</option><option value="8192">8 GB</option>
+              </select>
+            </div>
+            <div class="space-y-2">
+              <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">按时长分割</label>
+              <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="settings.split_by_duration_minutes||0" @change="updateSetting('split_by_duration_minutes',parseInt($event.target.value))">
+                <option value="0">禁用</option><option value="60">1 小时</option><option value="120">2 小时</option><option value="180">3 小时</option><option value="240">4 小时</option><option value="360">6 小时</option>
+              </select>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">文件名模板</label>
+            <input class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="{username}_{date}_{duration}_merged" :value="settings.filename_template||''" @change="updateSetting('filename_template',$event.target.value)"/>
+            <p class="text-[10px] text-on-surface-variant/60">变量: {username} {platform} {date} {time} {datetime} {duration} {segments} {quality}</p>
+          </div>
+          <div class="space-y-2">
+            <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">录后脚本</label>
+            <div class="flex gap-2">
+              <input class="flex-1 bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="脚本路径（留空禁用）" :value="settings.post_process_script||''" @change="updateSetting('post_process_script',$event.target.value)"/>
+              <button class="px-3 h-10 rounded-md bg-surface-container-highest text-xs font-bold text-on-surface-variant hover:text-primary" @click="testPostScript()">测试</button>
+            </div>
+            <p class="text-[10px] text-on-surface-variant/60">环境变量: SV_USERNAME, SV_FILE_PATH, SV_PLATFORM, SV_EVENT</p>
+          </div>
+          <!-- 配置导入导出 -->
+          <div class="flex gap-2">
+            <button class="flex-1 h-9 rounded-md bg-surface-container-highest text-xs font-bold text-on-surface-variant hover:text-primary" @click="exportConfig()">导出配置</button>
+            <label class="flex-1 h-9 rounded-md bg-surface-container-highest text-xs font-bold text-on-surface-variant hover:text-primary flex items-center justify-center cursor-pointer">
+              导入配置
+              <input type="file" accept=".json" class="hidden" @change="importConfig($event)"/>
+            </label>
+          </div>
         </div>
-        <div class="h-2 w-full bg-surface-container-highest rounded-full overflow-hidden mb-2">
-          <div class="h-full bg-gradient-to-r from-primary-container to-primary rounded-full" :style="'width:'+Math.min(diskInfo.total_bytes?diskInfo.recordings_bytes/diskInfo.total_bytes*100:0,100)+'%'"></div>
+      </div>
+
+      <!-- ── 高光 & 片段 ── -->
+      <div class="border border-outline-variant/15 rounded-xl overflow-hidden">
+        <button class="w-full flex items-center justify-between px-4 py-3 bg-surface-container-high/50 hover:bg-surface-container-highest/50 transition-colors" @click="sOpen.highlight=!sOpen.highlight">
+          <span class="text-sm font-semibold">高光检测 & 片段生成</span>
+          <span class="material-symbols-outlined text-base text-on-surface-variant transition-transform" :class="sOpen.highlight?'rotate-180':''">expand_more</span>
+        </button>
+        <div x-show="sOpen.highlight" x-cloak class="px-4 py-4 space-y-4">
+          <div class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" class="rounded border-outline-variant text-primary focus:ring-primary" :checked="settings.danmaku_capture" @change="updateSetting('danmaku_capture', $event.target.checked)"/>
+                <span class="text-xs">弹幕抓取</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" class="rounded border-outline-variant text-primary focus:ring-primary" :checked="settings.highlight_auto_detect" @change="updateSetting('highlight_auto_detect', $event.target.checked)"/>
+                <span class="text-xs">合并后自动检测</span>
+              </label>
+            </div>
+            <div class="space-y-2">
+              <label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">关键词（逗号分隔）</label>
+              <input class="w-full bg-surface-container-high border-none text-sm rounded-md h-10 px-3 focus:ring-1 focus:ring-primary" :value="(settings.highlight_keywords||[]).join(', ')" @change="updateSetting('highlight_keywords', $event.target.value.split(',').map(s=>s.trim()).filter(Boolean))"/>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div class="space-y-1"><label class="text-[10px] text-on-surface-variant">最低分数</label><input type="number" min="0" max="1" step="0.1" class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.highlight_min_score||0.6" @change="updateSetting('highlight_min_score', parseFloat($event.target.value))"/></div>
+              <div class="space-y-1"><label class="text-[10px] text-on-surface-variant">最短(秒)</label><input type="number" min="5" max="300" class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.highlight_min_duration||15" @change="updateSetting('highlight_min_duration', parseInt($event.target.value))"/></div>
+              <div class="space-y-1"><label class="text-[10px] text-on-surface-variant">最长(秒)</label><input type="number" min="10" max="600" class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.highlight_max_duration||60" @change="updateSetting('highlight_max_duration', parseInt($event.target.value))"/></div>
+            </div>
+          </div>
+          <div class="space-y-3">
+            <h4 class="text-sm font-semibold">片段生成</h4>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="space-y-1"><label class="text-[10px] text-on-surface-variant">画面比例</label>
+                <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.clip_format||'vertical'" @change="updateSetting('clip_format', $event.target.value)">
+                  <option value="vertical">竖屏 9:16</option><option value="horizontal">横屏 16:9</option><option value="square">方形 1:1</option>
+                </select>
+              </div>
+              <div class="space-y-1"><label class="text-[10px] text-on-surface-variant">分辨率</label>
+                <select class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-2 focus:ring-1 focus:ring-primary" :value="settings.clip_resolution||'1080x1920'" @change="updateSetting('clip_resolution', $event.target.value)">
+                  <option value="1080x1920">1080x1920</option><option value="720x1280">720x1280</option><option value="1920x1080">1920x1080</option><option value="1080x1080">1080x1080</option>
+                </select>
+              </div>
+            </div>
+            <div class="space-y-2"><label class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">水印文本</label><input class="w-full bg-surface-container-high border-none text-sm rounded-md h-9 px-3 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="留空不加水印" :value="settings.clip_watermark||''" @change="updateSetting('clip_watermark', $event.target.value)"/></div>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="rounded border-outline-variant text-primary focus:ring-primary" :checked="settings.clip_danmaku_overlay" @change="updateSetting('clip_danmaku_overlay', $event.target.checked)"/><span class="text-xs">弹幕字幕叠加</span></label>
+          </div>
         </div>
-        <div class="flex justify-between text-[10px] text-on-surface-variant font-medium">
-          <span x-text="fmtSize(diskInfo.recordings_bytes)+' 已用'"></span>
-          <span x-text="fmtSize(diskInfo.total_bytes)+' 总容量'"></span>
+      </div>
+
+      <!-- ── Webhook ── -->
+      <div class="border border-outline-variant/15 rounded-xl overflow-hidden">
+        <button class="w-full flex items-center justify-between px-4 py-3 bg-surface-container-high/50 hover:bg-surface-container-highest/50 transition-colors" @click="sOpen.webhook=!sOpen.webhook">
+          <span class="text-sm font-semibold">Webhook 通知</span>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-on-surface-variant" x-text="(settings.webhooks||[]).length + ' 个'"></span>
+            <span class="material-symbols-outlined text-base text-on-surface-variant transition-transform" :class="sOpen.webhook?'rotate-180':''">expand_more</span>
+          </div>
+        </button>
+        <div x-show="sOpen.webhook" x-cloak class="px-4 py-4 space-y-3">
+          <button class="text-xs text-primary font-medium hover:underline" @click="settings.webhooks = [...(settings.webhooks||[]), {type:'generic',url:'',events:['recording_start','recording_end','merge_done','error']}]">+ 添加 Webhook</button>
+          <template x-for="(wh, wi) in (settings.webhooks||[])" :key="wi">
+            <div class="bg-surface-container-low rounded-lg p-3 space-y-2 border border-outline-variant/10">
+              <div class="flex items-center gap-2">
+                <select class="flex-none bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary w-24" x-model="wh.type">
+                  <option value="discord">Discord</option>
+                  <option value="telegram">Telegram</option>
+                </select>
+                <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Webhook URL" x-model="wh.url"/>
+                <button class="text-on-surface-variant hover:text-error text-xs p-1" @click="settings.webhooks.splice(wi,1); updateSetting('webhooks', settings.webhooks)">
+                  <span class="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+              <template x-if="wh.type==='telegram'">
+                <div class="flex gap-2">
+                  <input class="flex-1 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Bot Token" x-model="wh.bot_token"/>
+                  <input class="w-28 bg-surface-container-high border-none text-xs rounded px-2 py-1 focus:ring-1 focus:ring-primary placeholder:text-on-surface-variant/40" placeholder="Chat ID" x-model="wh.chat_id"/>
+                </div>
+              </template>
+              <div class="flex items-center gap-2">
+                <button class="text-[10px] px-2 py-0.5 rounded font-bold transition-all" :class="wh.events?.includes('recording_start')?'bg-primary/20 text-primary':'bg-surface-container-highest text-on-surface-variant'" @click="wh.events?.includes('recording_start')?wh.events.splice(wh.events.indexOf('recording_start'),1):wh.events.push('recording_start')">录制</button>
+                <button class="text-[10px] px-2 py-0.5 rounded font-bold transition-all" :class="wh.events?.includes('merge_done')?'bg-primary/20 text-primary':'bg-surface-container-highest text-on-surface-variant'" @click="wh.events?.includes('merge_done')?wh.events.splice(wh.events.indexOf('merge_done'),1):wh.events.push('merge_done')">合并</button>
+                <button class="text-[10px] px-2 py-0.5 rounded font-bold transition-all" :class="wh.events?.includes('error')?'bg-error/20 text-error':'bg-surface-container-highest text-on-surface-variant'" @click="wh.events?.includes('error')?wh.events.splice(wh.events.indexOf('error'),1):wh.events.push('error')">错误</button>
+                <div class="flex-1"></div>
+                <button class="text-[10px] px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant hover:text-primary font-bold" @click="testWebhook(wh)">测试</button>
+                <button class="text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary font-bold" @click="updateSetting('webhooks', settings.webhooks)">保存</button>
+              </div>
+            </div>
+          </template>
         </div>
+      </div>
+
+      <!-- ── 存储状态 ── -->
+      <div class="border border-outline-variant/15 rounded-xl overflow-hidden">
+        <button class="w-full flex items-center justify-between px-4 py-3 bg-surface-container-high/50 hover:bg-surface-container-highest/50 transition-colors" @click="sOpen.storage=!sOpen.storage">
+          <span class="text-sm font-semibold">存储状态</span>
+          <span class="material-symbols-outlined text-base text-on-surface-variant transition-transform" :class="sOpen.storage?'rotate-180':''">expand_more</span>
+        </button>
+        <div x-show="sOpen.storage" x-cloak class="px-4 py-4">
+          <div class="bg-surface-container-low rounded-xl p-4 border border-outline-variant/10">
+            <div class="flex justify-between items-center mb-3">
+              <div class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-lg">storage</span><span class="text-sm font-bold">磁盘用量</span></div>
+              <span class="text-xs font-mono text-on-surface-variant" x-text="fmtSize(diskInfo.free_bytes)+' 可用'"></span>
+            </div>
+            <div class="h-2 w-full bg-surface-container-highest rounded-full overflow-hidden mb-2">
+              <div class="h-full bg-gradient-to-r from-primary-container to-primary rounded-full" :style="'width:'+Math.min(diskInfo.total_bytes?diskInfo.recordings_bytes/diskInfo.total_bytes*100:0,100)+'%'"></div>
+            </div>
+            <div class="flex justify-between text-[10px] text-on-surface-variant font-medium">
+              <span x-text="fmtSize(diskInfo.recordings_bytes)+' 已用'"></span>
+              <span x-text="fmtSize(diskInfo.total_bytes)+' 总容量'"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       </div>
     </div>
-    <div class="px-6 py-4 bg-surface-container-highest/30 border-t border-outline-variant/15 flex justify-between items-center">
+    <div class="px-6 py-4 bg-surface-container-highest/30 border-t border-outline-variant/15 flex justify-between items-center flex-shrink-0">
       <button class="text-sm font-medium text-primary flex items-center gap-2 px-3 py-2 rounded-md hover:bg-surface-container-highest transition-all" @click="showSettings=false; currentPage='system'; fetchSystem(); loadLogs()">
         <span class="material-symbols-outlined text-base">receipt_long</span>查看日志
       </button>
@@ -2095,7 +2212,7 @@ function app() {
     manualClipStart: 0, manualClipEnd: 60, clipPreviewUrl: '', clipVideoDuration: 0, clipWatermark: '',
     playingVideo: null, toast: '', toastType: 'success', toastTimer: null, ticker: null,
     mergeGroups: [], mergeGap: 15, activeMerges: {}, deleteAfterMerge: false, excludedFiles: [], mergePreviewResult: null, mergePreviewLoading: false,
-    settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true, disk_warn_critical_mb: 500, disk_warn_error_mb: 5120, disk_warn_warning_mb: 10240 },
+    settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true, disk_warn_critical_mb: 500, disk_warn_error_mb: 5120, disk_warn_warning_mb: 10240, prevent_sleep_mode: 'recording' },
     showSettings: false, diskInfo: { recordings_bytes: 0, free_bytes: 0, total_bytes: 0 }, _lastEventTs: 0,
     // 用户认证
     authRequired: false, authUser: null, authTab: 'login', authEmail: '', authPassword: '', authDisplayName: '', authError: '', authBusy: false, showUserMenu: false,
@@ -2110,7 +2227,8 @@ function app() {
     storageBreakdown: [], storageSearch: '',
     // Storage 内联文件浏览
     storageExpandedUser: null, storageFiles: [], storageFilesLoading: false,
-    storagePlayingVideo: null, storagePlayingUser: null,
+    storagePlayingVideo: null, storagePlayingUser: null, storagePlayingSubtitles: [],
+    showTranslateDialog: false, translateDialogUser: '', translateDialogFile: '', translateSourceFile: '', translateTargetLang: '', translateAvailableSubs: [], translateLoading: false,
     storageBatchMode: false, storageSelectedFiles: [],
     storageSessions: {}, storageExpandedSession: null,
     // 全局搜索
@@ -2259,6 +2377,80 @@ function app() {
         if (r.ok) this.showToast(`字幕已生成: ${d.subtitle_file}`);
         else this.showToast('字幕生成失败: '+(d.error||'未知错误'), 'error');
       } catch(e) { this.showToast('字幕生成失败', 'error'); }
+    },
+    async openTranslateDialog(username, filename) {
+      this.translateDialogUser = username;
+      this.translateDialogFile = filename;
+      this.translateSourceFile = '';
+      this.translateLoading = false;
+      try {
+        const r = await this._apiFetch(`/api/recordings/${username}/${filename}/subtitles`);
+        const d = await r.json();
+        this.translateAvailableSubs = (d.subtitles || []).filter(s => s.format === 'srt');
+        if (this.translateAvailableSubs.length) this.translateSourceFile = this.translateAvailableSubs[0].file;
+      } catch(e) { this.translateAvailableSubs = []; }
+      this.showTranslateDialog = true;
+    },
+    async doBurnSubtitle() {
+      if (!this.translateSourceFile) { this.showToast('请先生成字幕', 'error'); return; }
+      this.translateLoading = true;
+      try {
+        const r = await this._apiFetch(
+          `/api/recordings/${this.translateDialogUser}/${this.translateDialogFile}/subtitle/burn`,
+          { method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ subtitle_file: this.translateSourceFile }) }
+        );
+        const d = await r.json();
+        if (r.ok) {
+          this.showToast(`烧录完成: ${d.output_file}`);
+          this.showTranslateDialog = false;
+        } else {
+          this.showToast('烧录失败: '+(d.error||'未知错误'), 'error');
+        }
+      } catch(e) { this.showToast('烧录失败', 'error'); }
+      this.translateLoading = false;
+    },
+    async doTranslateSubtitle() {
+      if (!this.translateSourceFile) { this.showToast('请先生成字幕', 'error'); return; }
+      if (!this.translateTargetLang) { this.showToast('请选择目标语言', 'error'); return; }
+      this.translateLoading = true;
+      try {
+        const r = await this._apiFetch(
+          `/api/recordings/${this.translateDialogUser}/${this.translateDialogFile}/subtitle/translate`,
+          { method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ source_file: this.translateSourceFile, target_lang: this.translateTargetLang }) }
+        );
+        const d = await r.json();
+        if (r.ok) {
+          this.showToast(`翻译完成: ${d.output_file}（缓存命中 ${d.cache_hits}，API 调用 ${d.api_calls}）`);
+          this.showTranslateDialog = false;
+        } else {
+          this.showToast('翻译失败: '+(d.error||'未知错误'), 'error');
+        }
+      } catch(e) { this.showToast('翻译失败', 'error'); }
+      this.translateLoading = false;
+    },
+    loadSubtitleTracks(videoEl, subtitles, username) {
+      // 清除旧 track
+      while (videoEl.firstChild) videoEl.removeChild(videoEl.firstChild);
+      subtitles.forEach((s, i) => {
+        const track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.src = `/api/subtitle/${username}/${s.file}`;
+        track.srclang = s.language;
+        track.label = s.language;
+        if (i === 0) track.default = true;
+        videoEl.appendChild(track);
+      });
+    },
+    async playWithSubtitles(username, filename) {
+      this.storagePlayingUser = username;
+      this.storagePlayingVideo = `/api/video/${username}/${filename}`;
+      try {
+        const r = await this._apiFetch(`/api/recordings/${username}/${filename}/subtitles`);
+        const d = await r.json();
+        this.storagePlayingSubtitles = d.subtitles || [];
+      } catch(e) { this.storagePlayingSubtitles = []; }
     },
     debounceSearch() {
       clearTimeout(this.searchDebounceTimer);

@@ -27,7 +27,7 @@ async def get_models():
 @router.post("/models")
 async def add_model(req: AddModelRequest):
     from server import manager, db, broadcast, apply_settings_to_recorders, save_config
-    from quota import QuotaManager
+    from streamvideo.core.auth.quota import QuotaManager
 
     qm = QuotaManager(db)
     tier_info = qm.get_tier_info("default")

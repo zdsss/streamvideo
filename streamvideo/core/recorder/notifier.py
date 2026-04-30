@@ -148,18 +148,3 @@ def check_schedule(schedule: Optional[dict]) -> bool:
         return start_min <= now_min <= end_min
     else:  # 跨午夜，如 20:00 - 02:00
         return now_min >= start_min or now_min <= end_min
-
-
-PLATFORM_CLASSES = {
-    "douyin": DouyinRecorder,
-    "bilibili": BilibiliRecorder,
-    "twitch": TwitchRecorder,
-    "youtube": YouTubeRecorder,
-    "huya": HuyaRecorder,
-    "douyu": DouyuRecorder,
-    "kick": KickRecorder,
-    "generic": GenericRecorder,
-}
-
-
-# ========== RecorderManager ==========

@@ -41,5 +41,8 @@
   "clip_format": "vertical",
   "clip_resolution": "1080x1920",
   "clip_watermark": "",
-  "clip_danmaku_overlay": true
+  "clip_danmaku_overlay": true,
+  "disk_warn_critical_mb": 500,
+  "disk_warn_error_mb": 5120,
+  "disk_warn_warning_mb": 10240
 }
