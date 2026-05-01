@@ -187,6 +187,11 @@ class BaseLiveRecorder:
                                 s.status = "merged"
                                 s.merged_file = ""
                                 changed = True
+                            # Recover stuck merging sessions
+                            if s.status == "merging":
+                                logger.info(f"[{username}] Recovering stuck merging session {s.session_id}")
+                                s.status = "ended"
+                                changed = True
                     if changed:
                         self._save_sessions()
                     logger.info(f"[{username}] Loaded {len(self._sessions)} sessions from SQLite")
@@ -216,6 +221,11 @@ class BaseLiveRecorder:
                             if s.status == "ended" and len(s.segments) == 0:
                                 s.status = "merged"
                                 s.merged_file = ""
+                                changed = True
+                            # Recover stuck merging sessions
+                            if s.status == "merging":
+                                logger.info(f"[{username}] Recovering stuck merging session {s.session_id}")
+                                s.status = "ended"
                                 changed = True
                     if changed:
                         self._save_sessions()
@@ -256,6 +266,8 @@ class BaseLiveRecorder:
             status="active",
         )
         self._sessions.append(session)
+        if len(self._sessions) > 100:
+            self._sessions = self._sessions[-100:]
         self._current_session = session
         self._save_sessions()
         logger.info(f"[{self.info.username}] New session: {session.session_id}")
