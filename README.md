@@ -177,13 +177,13 @@ ended → 自动合并 → merging → merged（72h 内可撤回）
 server.py                   # FastAPI 服务器入口（742 行，已模块化）
 streamvideo/                # 主包（分层架构）
 ├── api/                    # API 层
-│   ├── routes/            # 路由模块（9 个，111 个端点）
+│   ├── routes/            # 路由模块（9 个，98 个端点）
 │   │   ├── auth.py        # 认证 (5 端点)
 │   │   ├── streams.py     # 录制流 (15 端点)
 │   │   ├── storage.py     # 存储 (26 端点)
-│   │   ├── highlights.py  # 高光 (21 端点)
-│   │   ├── clips.py       # 片段 (20 端点)
-│   │   ├── system.py      # 系统 (5 端点)
+│   │   ├── highlights.py  # 高光 (6 端点)
+│   │   ├── clips.py       # 片段 (21 端点)
+│   │   ├── system.py      # 系统 (6 端点)
 │   │   ├── distribute.py  # 分发 (11 端点)
 │   │   ├── payment.py     # 支付 (5 端点)
 │   │   └── tasks.py       # 任务 (3 端点)
@@ -242,7 +242,7 @@ subtitle_gen.py, subtitle_translator.py, cover_gen.py, task_queue.py
 
 **架构说明**：
 - **分层架构**：API 层 → 核心业务层 → 基础设施层 → 共享层
-- **模块化**：73 个 Python 文件，11,755 行代码
+- **模块化**：67 个 Python 文件，11,783 行代码
 - **向后兼容**：根目录旧文件保留并添加 DeprecationWarning
 - **详细文档**：参见 `doc/refactor-complete-summary.md`
 
