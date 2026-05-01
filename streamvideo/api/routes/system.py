@@ -153,6 +153,8 @@ async def export_config():
             "filename_template": getattr(rec, "_per_model_filename_template", None),
             "custom_cookies": rec.custom_cookies or "",
             "custom_stream_url": rec.custom_stream_url or "",
+            "session_reuse_seconds": getattr(rec, "_per_model_session_reuse", 0) or 0,
+            "notes": getattr(rec, "_notes", "") or "",
         }
         models_data.append(m)
 
@@ -228,6 +230,12 @@ async def import_config(req: dict):
                     rec.custom_cookies = m["custom_cookies"]
                 if m.get("custom_stream_url"):
                     rec.custom_stream_url = m["custom_stream_url"]
+                if m.get("session_reuse_seconds") is not None:
+                    rec._per_model_session_reuse = m["session_reuse_seconds"]
+                    if m["session_reuse_seconds"] is not None:
+                        rec.session_reuse_window = m["session_reuse_seconds"]
+                if m.get("notes"):
+                    rec._notes = m["notes"]
             imported_models += 1
         except Exception as e:
             errors.append(f"导入 {url} 失败: {e}")

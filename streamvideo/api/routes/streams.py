@@ -198,6 +198,19 @@ async def set_model_schedule(username: str, req: dict):
             return JSONResponse({"error": "end 必须是时间字符串 (HH:MM)"}, status_code=400)
         if "days" in schedule and not isinstance(schedule["days"], list):
             return JSONResponse({"error": "days 必须是数组"}, status_code=400)
+
+        def _valid_time(s: str) -> bool:
+            try:
+                parts = s.split(":")
+                return len(parts) == 2 and 0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59
+            except (ValueError, IndexError):
+                return False
+
+        if "start" in schedule and not _valid_time(schedule["start"]):
+            return JSONResponse({"error": "start 时间格式无效，需要 HH:MM"}, status_code=400)
+        if "end" in schedule and not _valid_time(schedule["end"]):
+            return JSONResponse({"error": "end 时间格式无效，需要 HH:MM"}, status_code=400)
+
     rec.schedule = schedule
     save_config()
     return JSONResponse({"ok": True, "schedule": rec.schedule})

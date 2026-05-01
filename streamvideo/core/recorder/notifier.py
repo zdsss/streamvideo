@@ -64,7 +64,13 @@ class WebhookNotifier:
         elif wh_type == "telegram":
             await self._send_telegram(session, wh, event, data)
         else:
-            logger.warning(f"Unsupported webhook type: {wh_type}")
+            # Generic webhook: POST event+data as JSON
+            if not url:
+                return
+            payload = {"event": event, "data": data, "timestamp": time.time()}
+            async with session.post(url, json=payload) as resp:
+                if resp.status >= 400:
+                    logger.warning(f"Webhook generic returned {resp.status}")
 
     def _format_discord(self, event: str, data: dict) -> dict:
         titles = {
@@ -120,6 +126,8 @@ class WebhookNotifier:
             raise ValueError("Telegram 需要 bot_token 和 chat_id")
         if wh_type == "discord" and not wh.get("url"):
             raise ValueError("Discord 需要 URL")
+        if wh_type == "generic" and not wh.get("url"):
+            raise ValueError("Generic webhook 需要 URL")
         try:
             await self._send(wh, "test", {"message": "StreamVideo webhook test"})
             return True
@@ -139,8 +147,12 @@ def check_schedule(schedule: Optional[dict]) -> bool:
         return False
     start_str = schedule.get("start", "00:00")
     end_str = schedule.get("end", "23:59")
-    start_h, start_m = map(int, start_str.split(":"))
-    end_h, end_m = map(int, end_str.split(":"))
+    try:
+        start_h, start_m = map(int, start_str.split(":"))
+        end_h, end_m = map(int, end_str.split(":"))
+    except (ValueError, AttributeError):
+        logger.warning(f"Invalid schedule time format: start={start_str}, end={end_str}")
+        return False
     start_min = start_h * 60 + start_m
     end_min = end_h * 60 + end_m
     now_min = now.hour * 60 + now.minute

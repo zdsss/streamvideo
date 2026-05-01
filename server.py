@@ -289,6 +289,24 @@ def _safe_bg_task(coro):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import shutil as _shutil
+
+    # Dependency checks
+    for tool in ("ffmpeg", "streamlink"):
+        if not _shutil.which(tool):
+            logger.warning(f"{tool} not found in PATH — some features may not work")
+
+    # Ensure recordings directory exists
+    Path(RECORDINGS_DIR).mkdir(parents=True, exist_ok=True)
+
+    # DB integrity check
+    try:
+        check = db._conn().execute("PRAGMA integrity_check").fetchone()
+        if check and check[0] != "ok":
+            logger.warning(f"Database integrity check: {check[0]}")
+    except Exception as e:
+        logger.warning(f"Database integrity check failed: {e}")
+
     await remux_stale_raw_files()
 
     config = load_config()
@@ -522,6 +540,24 @@ async def _do_retention_cleanup(days: int):
         return
     cleaned = 0
     cleaned_size = 0
+    # Collect filenames referenced by active/ended sessions (skip these)
+    protected_files: set[str] = set()
+    try:
+        for d in rec_path.iterdir():
+            if not d.is_dir() or d.name in ("thumbs", "logs"):
+                continue
+            username = d.name
+            try:
+                sessions = db.get_sessions(username)
+                for s in (sessions or []):
+                    if s.get("status") in ("active", "ended", "merging"):
+                        for seg in (s.get("segments") or []):
+                            if isinstance(seg, str):
+                                protected_files.add(seg)
+            except Exception:
+                pass
+    except Exception:
+        pass
     for d in rec_path.iterdir():
         if not d.is_dir() or d.name in ("thumbs", "logs"):
             continue
@@ -531,6 +567,8 @@ async def _do_retention_cleanup(days: int):
             try:
                 st = f.stat()
                 if st.st_mtime < cutoff:
+                    if f.name in protected_files:
+                        continue
                     size = st.st_size
                     f.unlink()
                     cleaned += 1
@@ -639,23 +677,24 @@ app.add_middleware(SecurityHeadersMiddleware)
 # ========== 注册新架构路由（Phase 2 拆分） ==========
 # 注入依赖后注册路由，新旧端点并存，逐步迁移
 from streamvideo.api.routes.clips import router as clips_router, init_clips_router
+from streamvideo.api.routes.highlights import router as highlights_router, init_highlights_router
 from streamvideo.api.routes.system import router as system_router, init_system_router
 from streamvideo.api.routes.distribute import router as distribute_router, init_distribute_router
 from streamvideo.api.routes.payment import router as payment_router, init_payment_router
 from streamvideo.api.routes.tasks import router as tasks_router, init_tasks_router
 
 init_clips_router(db, manager, app_settings, RECORDINGS_DIR, broadcast)
+init_highlights_router(db, manager, app_settings, RECORDINGS_DIR, broadcast)
 init_system_router(db, manager, app_settings, RECORDINGS_DIR, DEFAULT_SETTINGS,
                    apply_settings_to_recorders, save_config, broadcast)
 init_distribute_router(db)
 init_payment_router(db)
 init_tasks_router(task_queue)
 
-# 同时注册已有的 auth/streams/storage/highlights 路由
+# 同时注册已有的 auth/streams/storage 路由
 from streamvideo.api.routes.auth import router as auth_router
 from streamvideo.api.routes.streams import router as streams_router
 from streamvideo.api.routes.storage import router as storage_router
-from streamvideo.api.routes.highlights import router as highlights_router
 
 for _router in [auth_router, streams_router, storage_router, highlights_router,
                 clips_router, system_router, distribute_router, payment_router, tasks_router]:
