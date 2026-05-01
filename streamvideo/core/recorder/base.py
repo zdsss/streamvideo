@@ -833,12 +833,22 @@ class BaseLiveRecorder:
             "-i", raw_path, "-c", "copy", "-movflags", "+faststart", mp4_path,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await proc.communicate()
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            logger.warning(f"[{self.info.username}] Remux timed out after 120s")
+            return False
         if proc.returncode != 0:
             logger.warning(f"[{self.info.username}] Remux failed: {stderr.decode()[:200]}")
             if os.path.exists(raw_path) and os.path.getsize(raw_path) > 100_000:
-                os.rename(raw_path, mp4_path)
-                return True
+                try:
+                    os.rename(raw_path, mp4_path)
+                    return True
+                except OSError as e:
+                    logger.warning(f"[{self.info.username}] Remux rename fallback failed: {e}")
+                    return False
             return False
         if os.path.exists(raw_path):
             os.remove(raw_path)

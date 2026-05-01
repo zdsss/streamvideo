@@ -61,6 +61,7 @@ class RecorderManager:
         self.recorders: dict[str, BaseLiveRecorder] = {}
         self._thumb_task: Optional[asyncio.Task] = None
         self._active_merges: dict[str, dict] = {}
+        self._merge_lock = asyncio.Lock()
         self._merge_timeout = 14400  # 默认 4 小时（秒），可通过设置覆盖
         self._merge_gap_minutes = 15  # 合并分组时间间隔（分钟）
         self._post_process_rename = False  # 智能重命名开关
@@ -78,6 +79,18 @@ class RecorderManager:
         self._ytdlp_available = shutil.which("yt-dlp") is not None
         self._streamlink_available = shutil.which("streamlink") is not None
         logger.info(f"Recording engines: yt-dlp={'yes' if self._ytdlp_available else 'no'}, streamlink={'yes' if self._streamlink_available else 'no'}")
+
+    async def _aexists(self, path):
+        return await asyncio.to_thread(path.exists)
+
+    async def _astat(self, path):
+        return await asyncio.to_thread(path.stat)
+
+    async def _aunlink(self, path):
+        return await asyncio.to_thread(path.unlink)
+
+    async def _arename(self, src, dst):
+        return await asyncio.to_thread(src.rename, dst)
 
     def _persist_sessions(self, username: str, sessions: list):
         """统一持久化 sessions：SQLite 为主，JSON 为备份"""
@@ -341,11 +354,13 @@ class RecorderManager:
                 valid = []
                 for fn in session.segments:
                     fp = model_dir / fn
-                    if fp.exists() and fp.stat().st_size >= min_size:
-                        valid.append(fn)
-                    elif fp.exists() and fp.stat().st_size < min_size:
-                        logger.info(f"[{username}] Auto-cleanup small segment: {fn} ({fp.stat().st_size/1024:.0f} KB)")
-                        fp.unlink()
+                    if await self._aexists(fp):
+                        st = await self._astat(fp)
+                        if st.st_size >= min_size:
+                            valid.append(fn)
+                        else:
+                            logger.info(f"[{username}] Auto-cleanup small segment: {fn} ({st.st_size/1024:.0f} KB)")
+                            await self._aunlink(fp)
 
                 if len(valid) == 0:
                     session.status = "merged"
@@ -361,8 +376,8 @@ class RecorderManager:
                     final_name = self._generate_smart_name(username, valid, valid[0], template_override=pm_template)
                     if final_name != valid[0]:
                         final_path = model_dir / final_name
-                        if not final_path.exists():
-                            single_file.rename(final_path)
+                        if not await self._aexists(final_path):
+                            await self._arename(single_file, final_path)
                             session.merged_file = final_name
                         else:
                             session.merged_file = valid[0]
@@ -432,7 +447,10 @@ class RecorderManager:
                 else:
                     merge_type_label = "auto_high"
 
-                total = sum((model_dir / fn).stat().st_size for fn in valid)
+                total = 0
+                for fn in valid:
+                    st = await self._astat(model_dir / fn)
+                    total += st.st_size
                 logger.info(f"[{username}] Session {session.session_id}: merging {len(valid)} segments ({total/1024/1024:.1f} MB)...")
                 session.status = "merging"
                 session.merge_started_at = time.time()
@@ -485,14 +503,21 @@ class RecorderManager:
                 valid = []
                 for f in group["files"]:
                     fp = model_dir / f["filename"]
-                    if fp.exists() and fp.stat().st_size >= min_size:
-                        valid.append(f["filename"])
-                    elif fp.exists():
-                        logger.info(f"[{username}] Auto-cleanup small segment: {f['filename']} ({fp.stat().st_size/1024:.0f} KB)")
-                        fp.unlink()
+                    if await self._aexists(fp):
+                        st = await self._astat(fp)
+                        if st.st_size >= min_size:
+                            valid.append(f["filename"])
+                        else:
+                            logger.info(f"[{username}] Auto-cleanup small segment: {f['filename']} ({st.st_size/1024:.0f} KB)")
+                            await self._aunlink(fp)
                 if len(valid) < 2:
                     continue
-                total = sum((model_dir / fn).stat().st_size for fn in valid if (model_dir / fn).exists())
+                total = 0
+                for fn in valid:
+                    fp = model_dir / fn
+                    if await self._aexists(fp):
+                        st = await self._astat(fp)
+                        total += st.st_size
                 logger.info(f"[{username}] Fallback auto-merging {len(valid)} segments ({total/1024/1024:.1f} MB)...")
                 try:
                     await self.merge_segments(username, valid, delete_originals=True)
@@ -630,7 +655,7 @@ class RecorderManager:
         for fn in filenames:
             if ".." in fn or "/" in fn:
                 raise ValueError(f"非法文件名: {fn}")
-            if not (model_dir / fn).exists():
+            if not await self._aexists(model_dir / fn):
                 raise FileNotFoundError(f"文件不存在: {fn}")
 
         rec = self.recorders.get(username)
@@ -644,11 +669,13 @@ class RecorderManager:
         output_name = f"{merge_id}.mp4"
         output_path = model_dir / output_name
 
-        if merge_id in self._active_merges and self._active_merges[merge_id].get("status") == "running":
-            return merge_id
-
         # 计算预期总大小（用于进度追踪）
-        expected_size = sum((model_dir / fn).stat().st_size for fn in filenames if (model_dir / fn).exists())
+        expected_size = 0
+        for fn in filenames:
+            fp = model_dir / fn
+            if await self._aexists(fp):
+                st = await self._astat(fp)
+                expected_size += st.st_size
 
         # 合并前磁盘空间检查：需要至少 expected_size + 500MB 缓冲
         disk_free = shutil.disk_usage(str(model_dir)).free
@@ -656,7 +683,10 @@ class RecorderManager:
         if disk_free < required:
             raise OSError(f"磁盘空间不足：需要 {required//1024//1024}MB，剩余 {disk_free//1024//1024}MB")
 
-        self._active_merges[merge_id] = {"status": "running", "progress": 0, "expected_size": expected_size}
+        async with self._merge_lock:
+            if merge_id in self._active_merges and self._active_merges[merge_id].get("status") == "running":
+                return merge_id
+            self._active_merges[merge_id] = {"status": "running", "progress": 0, "expected_size": expected_size}
         concat_path = model_dir / f".concat_{int(time.time())}.txt"
         merge_ok = False
 
@@ -704,9 +734,10 @@ class RecorderManager:
                 try:
                     if total_duration_us > 0:
                         raw_progress = progress_state["current_time_us"] / total_duration_us
-                    elif output_path.exists() and expected_size > 0:
+                    elif await self._aexists(output_path) and expected_size > 0:
                         # fallback: 文件大小估算
-                        raw_progress = output_path.stat().st_size / expected_size
+                        st = await self._astat(output_path)
+                        raw_progress = st.st_size / expected_size
                     else:
                         raw_progress = 0
                     progress = min(raw_progress * 0.90, 0.90)
@@ -786,7 +817,10 @@ class RecorderManager:
                 return merge_id
 
             merge_ok = True
-            result_size = output_path.stat().st_size if output_path.exists() else 0
+            result_size = 0
+            if await self._aexists(output_path):
+                st = await self._astat(output_path)
+                result_size = st.st_size
 
             # 后处理阶段进度: 0.90 → 0.95 → 1.0
             async def _update_progress(progress: float, phase: str):
@@ -797,12 +831,16 @@ class RecorderManager:
             # 后处理：时间戳修复
             await _update_progress(0.91, "修复时间戳...")
             await self._post_process_fix_timestamps(output_path)
-            result_size = output_path.stat().st_size if output_path.exists() else result_size
+            if await self._aexists(output_path):
+                st = await self._astat(output_path)
+                result_size = st.st_size
 
             # 后处理：H.265 转码（可选，耗时）
             await _update_progress(0.93, "转码处理...")
             await self._post_process_transcode(output_path, username)
-            result_size = output_path.stat().st_size if output_path.exists() else result_size
+            if await self._aexists(output_path):
+                st = await self._astat(output_path)
+                result_size = st.st_size
 
             # 后处理：智能重命名
             try:
@@ -810,18 +848,18 @@ class RecorderManager:
                 final_name = self._generate_smart_name(username, filenames, output_name)
                 if final_name != output_name:
                     final_path = model_dir / final_name
-                    if not final_path.exists():
-                        output_path.rename(final_path)
+                    if not await self._aexists(final_path):
+                        await self._arename(output_path, final_path)
                         output_name = final_name
                         output_path = final_path
                         logger.info(f"[{username}] Renamed to: {final_name}")
 
                 # 后处理：云存储上传（可选）
-                if output_path.exists():
+                if await self._aexists(output_path):
                     cloud_url = await self.cloud.upload(output_path, username)
 
                 # 后处理：录后脚本（可选）
-                if output_path.exists():
+                if await self._aexists(output_path):
                     await self._run_post_script(output_path, username, "merge_done")
             except Exception as e:
                 self._active_merges[merge_id] = {"status": "error", "error": f"Post-merge pipeline failed: {e}"}
@@ -829,12 +867,12 @@ class RecorderManager:
                 raise
 
             # 后处理：FlashCut 全自动流水线（检测高光 + 生成片段）
-            if getattr(self, '_highlight_auto_detect', False) and output_path.exists():
+            if getattr(self, '_highlight_auto_detect', False) and await self._aexists(output_path):
                 await _update_progress(0.98, "FlashCut 自动处理中...")
                 await self._auto_flashcut_pipeline(username, output_path)
 
             # 后处理：自动生成缩略图
-            if output_path.exists():
+            if await self._aexists(output_path):
                 _safe_task(self._generate_file_thumbnail(output_path, username))
 
             self._active_merges[merge_id] = {
@@ -849,26 +887,26 @@ class RecorderManager:
             if delete_originals:
                 for fn in filenames:
                     fp = model_dir / fn
-                    if fp.exists():
-                        fp.unlink()
+                    if await self._aexists(fp):
+                        await self._aunlink(fp)
             # 清理重编码临时文件
             temp_reenc = self._active_merges.get("_temp_reenc_files", {}).pop(username, [])
             for tmp_path in temp_reenc:
                 try:
                     p = Path(tmp_path)
-                    if p.exists():
-                        p.unlink()
+                    if await self._aexists(p):
+                        await self._aunlink(p)
                 except Exception:
                     logger.debug("suppressed exception", exc_info=True)
         except Exception as e:
             progress_stop.set()
-            if not merge_ok and output_path.exists():
-                output_path.unlink()
+            if not merge_ok and await self._aexists(output_path):
+                await self._aunlink(output_path)
             self._active_merges[merge_id] = {"status": "error", "error": str(e)}
             logger.error(f"[{username}] Merge error: {e}")
         finally:
-            if concat_path.exists():
-                concat_path.unlink()
+            if await self._aexists(concat_path):
+                await self._aunlink(concat_path)
 
         try:
             status_info = self._active_merges.get(merge_id, {})
@@ -940,9 +978,9 @@ class RecorderManager:
         # 清理输出文件
         if output_path:
             p = Path(output_path)
-            if p.exists():
+            if await self._aexists(p):
                 try:
-                    p.unlink()
+                    await self._aunlink(p)
                 except Exception:
                     logger.debug("suppressed exception", exc_info=True)
         self._active_merges[merge_id] = {"status": "cancelled", "error": "用户取消"}
@@ -987,11 +1025,12 @@ class RecorderManager:
 
     async def _post_process_fix_timestamps(self, file_path: Path):
         """合并后修复时间戳，确保播放器兼容"""
-        if not file_path.exists():
+        if not await self._aexists(file_path):
             return
         # 检查磁盘空间（需要至少 1.1 倍文件大小）
         try:
-            file_size = file_path.stat().st_size
+            st = await self._astat(file_path)
+            file_size = st.st_size
             disk_free = shutil.disk_usage(str(file_path.parent)).free
             if disk_free < file_size * 1.1:
                 logger.warning(f"Post-process skipped: insufficient disk space ({disk_free/1024/1024:.0f}MB free, need {file_size*1.1/1024/1024:.0f}MB)")
@@ -1007,25 +1046,29 @@ class RecorderManager:
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=3600)
-            if proc.returncode == 0 and fixed_path.exists() and fixed_path.stat().st_size > 0:
+            fixed_ok = False
+            if proc.returncode == 0 and await self._aexists(fixed_path):
+                fst = await self._astat(fixed_path)
+                fixed_ok = fst.st_size > 0
+            if fixed_ok:
                 tmp_backup = file_path.with_suffix(".original.mp4")
-                file_path.rename(tmp_backup)
+                await self._arename(file_path, tmp_backup)
                 try:
-                    fixed_path.rename(file_path)
-                    tmp_backup.unlink()
+                    await self._arename(fixed_path, file_path)
+                    await self._aunlink(tmp_backup)
                 except Exception:
-                    tmp_backup.rename(file_path)
+                    await self._arename(tmp_backup, file_path)
                     raise
                 logger.info(f"Post-process: timestamps fixed for {file_path.name}")
             else:
                 error_msg = stderr.decode()[:200] if stderr else "unknown"
                 logger.warning(f"Post-process timestamp fix failed (rc={proc.returncode}): {error_msg}")
-                if fixed_path.exists():
-                    fixed_path.unlink()
+                if await self._aexists(fixed_path):
+                    await self._aunlink(fixed_path)
         except Exception as e:
             logger.warning(f"Post-process timestamp fix failed: {e}")
-            if fixed_path.exists():
-                fixed_path.unlink()
+            if await self._aexists(fixed_path):
+                await self._aunlink(fixed_path)
 
     async def _detect_gpu_encoders(self) -> list[str]:
         """检测 ffmpeg 可用的硬件 H.265 编码器，结果缓存"""
@@ -1071,11 +1114,12 @@ class RecorderManager:
         use_h265 = h265_override if h265_override is not None else self._post_process_h265
         if not use_h265:
             return
-        if not file_path.exists():
+        if not await self._aexists(file_path):
             return
         # 检查磁盘空间
         try:
-            file_size = file_path.stat().st_size
+            st = await self._astat(file_path)
+            file_size = st.st_size
             disk_free = shutil.disk_usage(str(file_path.parent)).free
             if disk_free < file_size:
                 logger.warning(f"[{username}] Transcode skipped: insufficient disk space")
@@ -1122,25 +1166,29 @@ class RecorderManager:
             if rc != 0 and encoder != "libx265":
                 error_msg = stderr.decode()[:200] if stderr else "unknown"
                 logger.warning(f"[{username}] GPU transcode ({encoder}) failed: {error_msg}, falling back to software")
-                if h265_path.exists():
-                    h265_path.unlink()
+                if await self._aexists(h265_path):
+                    await self._aunlink(h265_path)
                 encode_args = self._get_encode_args("libx265")
                 rc, stderr = await _run_ffmpeg(encode_args)
 
-            if rc == 0 and h265_path.exists() and h265_path.stat().st_size > 0:
-                new_size = h265_path.stat().st_size
+            h265_ok = False
+            if rc == 0 and await self._aexists(h265_path):
+                hst = await self._astat(h265_path)
+                h265_ok = hst.st_size > 0
+            if h265_ok:
+                new_size = hst.st_size
                 ratio = (1 - new_size / file_size) * 100 if file_size > 0 else 0
                 original_path = file_path.with_suffix(".original.mp4")
-                file_path.rename(original_path)
+                await self._arename(file_path, original_path)
                 try:
-                    h265_path.rename(file_path)
+                    await self._arename(h265_path, file_path)
                 except Exception:
-                    original_path.rename(file_path)
+                    await self._arename(original_path, file_path)
                     raise
                 if getattr(self, "_preserve_original_on_transcode", False):
                     logger.info(f"[{username}] Original preserved: {original_path.name}")
                 else:
-                    original_path.unlink()
+                    await self._aunlink(original_path)
                 logger.info(f"[{username}] Transcode done: {file_size/1024/1024:.0f}MB → {new_size/1024/1024:.0f}MB ({ratio:.0f}% smaller)")
                 # Webhook 通知
                 await self.webhook.notify("merge_done", {
@@ -1148,12 +1196,12 @@ class RecorderManager:
             else:
                 error_msg = stderr.decode()[:200] if stderr else "unknown"
                 logger.warning(f"[{username}] Transcode failed: {error_msg}")
-                if h265_path.exists():
-                    h265_path.unlink()
+                if await self._aexists(h265_path):
+                    await self._aunlink(h265_path)
         except Exception as e:
             logger.warning(f"[{username}] Transcode error: {e}")
-            if h265_path.exists():
-                h265_path.unlink()
+            if await self._aexists(h265_path):
+                await self._aunlink(h265_path)
 
     def _generate_smart_name(self, username: str, input_files: list[str], default_name: str,
                               template_override: str = None) -> str:
@@ -1432,11 +1480,13 @@ class RecorderManager:
                 logger.debug("suppressed exception", exc_info=True)
         return []
 
-    def update_session_status(self, username: str, session_id: str, status: str, **kwargs):
+    async def update_session_status(self, username: str, session_id: str, status: str, **kwargs):
         """更新指定会话的状态"""
         rec = self.recorders.get(username)
         sessions = rec._sessions if rec else []
+        loaded_externally = False
         if not sessions:
+            loaded_externally = True
             if self.db:
                 try:
                     db_sessions = self.db.get_sessions(username)
@@ -1451,15 +1501,25 @@ class RecorderManager:
                             sessions = [RecordingSession.from_dict(s) for s in json.load(f)]
                     except Exception:
                         return
-        for s in sessions:
-            if s.session_id == session_id:
-                s.status = status
-                for k, v in kwargs.items():
-                    if hasattr(s, k):
-                        setattr(s, k, v)
-                break
-        # 持久化（SQLite 为主，JSON 为备份）
-        self._persist_sessions(username, sessions)
+        if rec and not loaded_externally:
+            async with rec._session_lock:
+                for s in sessions:
+                    if s.session_id == session_id:
+                        s.status = status
+                        for k, v in kwargs.items():
+                            if hasattr(s, k):
+                                setattr(s, k, v)
+                        break
+                self._persist_sessions(username, sessions)
+        else:
+            for s in sessions:
+                if s.session_id == session_id:
+                    s.status = status
+                    for k, v in kwargs.items():
+                        if hasattr(s, k):
+                            setattr(s, k, v)
+                    break
+            self._persist_sessions(username, sessions)
 
     async def _thumbnail_loop(self):
         """定期从录制中的视频生成缩略图，离线时保留已有缩略图"""

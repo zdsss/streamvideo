@@ -114,6 +114,9 @@ async def get_storage_breakdown():
 @router.get("/recordings/{username}/groups")
 async def get_recording_groups(username: str, gap: int = 15):
     from server import manager
+
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     groups = manager.get_grouped_recordings(username, gap_minutes=gap)
     return JSONResponse(groups)
 
@@ -147,10 +150,10 @@ async def delete_recording(username: str, filename: str):
     if ".." in filename or "/" in filename:
         return JSONResponse({"error": "invalid filename"}, status_code=400)
     video_path = Path(RECORDINGS_DIR) / username / filename
-    if not video_path.exists():
+    if not await asyncio.to_thread(video_path.exists):
         return JSONResponse({"error": "not found"}, status_code=404)
     try:
-        video_path.unlink()
+        await asyncio.to_thread(video_path.unlink)
     except OSError as e:
         return JSONResponse({"error": f"删除失败: {e}"}, status_code=500)
     return JSONResponse({"ok": True})
@@ -191,6 +194,8 @@ async def export_recordings_csv(username: str):
     from datetime import datetime
     from server import manager
 
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     files = manager.get_recordings(username)
     sessions = manager.get_sessions(username)
     output = io.StringIO()
@@ -226,7 +231,7 @@ async def merge_all_ended_sessions():
                         username, s["segments"],
                         delete_originals=app_settings.get("auto_delete_originals", True))
                     merge_info = manager._active_merges.get(merge_id, {})
-                    manager.update_session_status(
+                    await manager.update_session_status(
                         username, s["session_id"],
                         "merged" if merge_info.get("status") == "done" else "error",
                         merged_file=merge_info.get("filename", ""),
@@ -234,7 +239,7 @@ async def merge_all_ended_sessions():
                     results.append({"username": username, "session_id": s["session_id"],
                                     "status": merge_info.get("status", "unknown")})
                 except Exception as e:
-                    manager.update_session_status(username, s["session_id"], "error", merge_error=str(e))
+                    await manager.update_session_status(username, s["session_id"], "error", merge_error=str(e))
                     results.append({"username": username, "session_id": s["session_id"],
                                     "status": "error", "error": str(e)})
     return JSONResponse({"merged": len(results), "results": results})
@@ -293,6 +298,9 @@ async def cleanup_merged_originals():
 @router.get("/recordings/{username}")
 async def get_recordings(username: str):
     from server import manager
+
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     files = manager.get_recordings(username)
     return JSONResponse(files)
 
@@ -300,6 +308,9 @@ async def get_recordings(username: str):
 @router.get("/sessions/{username}")
 async def get_sessions(username: str):
     from server import manager
+
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     sessions = manager.get_sessions(username)
     return JSONResponse(sessions)
 
@@ -308,6 +319,8 @@ async def get_sessions(username: str):
 async def get_sessions_summary(username: str):
     from server import manager, RECORDINGS_DIR
 
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     sessions = manager.get_sessions(username)
     recordings = {f["filename"]: f for f in manager.get_recordings(username)}
     model_dir = Path(RECORDINGS_DIR) / username
@@ -363,6 +376,8 @@ async def get_sessions_summary(username: str):
 async def merge_session(username: str, session_id: str):
     from server import manager, app_settings, broadcast, RECORDINGS_DIR
 
+    if not _safe_username(username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
     sessions = manager.get_sessions(username)
     target = next((s for s in sessions if s.get("session_id") == session_id), None)
     if not target:
@@ -372,11 +387,14 @@ async def merge_session(username: str, session_id: str):
     segments = target.get("segments", [])
     if len(segments) < 2:
         return JSONResponse({"error": "片段不足，无需合并"}, status_code=400)
+    for fn in segments:
+        if ".." in fn or "/" in fn:
+            return JSONResponse({"error": f"非法文件名: {fn}"}, status_code=400)
     model_dir = Path(RECORDINGS_DIR) / username
-    missing = [fn for fn in segments if not (model_dir / fn).exists()]
+    missing = [fn for fn in segments if not await asyncio.to_thread((model_dir / fn).exists)]
     if missing:
         return JSONResponse({"error": f"片段文件缺失: {', '.join(missing)}"}, status_code=400)
-    manager.update_session_status(username, session_id, "merging")
+    await manager.update_session_status(username, session_id, "merging")
     try:
         merge_id = await manager.merge_segments(
             username, segments, delete_originals=app_settings.get("auto_delete_originals", True))
@@ -384,7 +402,7 @@ async def merge_session(username: str, session_id: str):
         if merge_info.get("status") == "done":
             merged_file = merge_info.get("filename", "")
             savings = merge_info.get("savings_bytes", 0)
-            manager.update_session_status(username, session_id, "merged",
+            await manager.update_session_status(username, session_id, "merged",
                                           merged_file=merged_file,
                                           merge_type="manual",
                                           rollback_deadline=time.time() + 72 * 3600,
@@ -399,12 +417,12 @@ async def merge_session(username: str, session_id: str):
                 }
             })
         else:
-            manager.update_session_status(username, session_id, "error",
+            await manager.update_session_status(username, session_id, "error",
                                           merge_error=merge_info.get("error", "合并失败"))
         return JSONResponse({"merge_id": merge_id, "status": merge_info.get("status", "unknown"),
                              "filename": merge_info.get("filename", "")})
     except (ValueError, FileNotFoundError) as e:
-        manager.update_session_status(username, session_id, "error", merge_error=str(e))
+        await manager.update_session_status(username, session_id, "error", merge_error=str(e))
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
@@ -431,7 +449,7 @@ async def cancel_merge(username: str, merge_id: str):
     if ok:
         for s_dict in manager.get_sessions(username):
             if s_dict.get("status") == "merging":
-                manager.update_session_status(username, s_dict["session_id"], "ended", merge_error="")
+                await manager.update_session_status(username, s_dict["session_id"], "ended", merge_error="")
         await broadcast({"type": "merge_cancelled", "data": {"username": username, "merge_id": merge_id}})
         return JSONResponse({"ok": True})
     return JSONResponse({"error": "合并任务不存在或已完成"}, status_code=400)
@@ -488,7 +506,7 @@ async def health_check_recordings(username: str):
                 result["codec"] = s.get("codec_name", "")
                 w, h = s.get("width", 0), s.get("height", 0)
                 result["resolution"] = f"{w}x{h}" if w and h else ""
-        except Exception:
+        except (json.JSONDecodeError, OSError):
             pass
         return result
 
@@ -498,9 +516,10 @@ async def health_check_recordings(username: str):
 
 
 @router.post("/recordings/cleanup-old")
-async def cleanup_old_recordings(req: dict = {}):
+async def cleanup_old_recordings(req: dict = None):
     from server import manager, RECORDINGS_DIR
 
+    req = req or {}
     days = req.get("days", 30)
     dry_run = req.get("dry_run", True)
     cutoff = time.time() - days * 86400
@@ -511,10 +530,11 @@ async def cleanup_old_recordings(req: dict = {}):
         if not user_dir.is_dir() or user_dir.name in ("thumbs", "logs"):
             continue
         for fp in user_dir.glob("*.mp4"):
-            if fp.stat().st_mtime < cutoff and ".raw." not in fp.name:
-                freed += fp.stat().st_size
+            st = await asyncio.to_thread(fp.stat)
+            if st.st_mtime < cutoff and ".raw." not in fp.name:
+                freed += st.st_size
                 if not dry_run:
-                    fp.unlink()
+                    await asyncio.to_thread(fp.unlink)
                 cleaned += 1
     return JSONResponse({"cleaned": cleaned, "freed_bytes": freed,
                          "freed_mb": round(freed / 1024 / 1024, 1), "dry_run": dry_run})
@@ -539,9 +559,10 @@ async def get_merge_queue():
 
 
 @router.post("/merge-queue/{session_id}/confirm")
-async def confirm_merge_queue(session_id: str, req: dict = {}):
+async def confirm_merge_queue(session_id: str, req: dict = None):
     from server import manager, app_settings
 
+    req = req or {}
     for username, rec in manager.recorders.items():
         for s in rec._sessions:
             if s.session_id == session_id and s.status == "ended":
@@ -571,9 +592,10 @@ async def dismiss_merge_queue(session_id: str):
 
 
 @router.post("/merge-queue/confirm-all")
-async def confirm_all_merge_queue(req: dict = {}):
+async def confirm_all_merge_queue(req: dict = None):
     from server import manager, app_settings
 
+    req = req or {}
     confirmed = 0
     for username, rec in list(manager.recorders.items()):
         for s in rec._sessions:
@@ -614,9 +636,10 @@ async def rollback_session(session_id: str):
 
 
 @router.post("/recordings/{username}/merge/preview")
-async def preview_merge(username: str, req: dict = {}):
+async def preview_merge(username: str, req: dict = None):
     from server import manager
 
+    req = req or {}
     if not _safe_username(username):
         return JSONResponse({"error": "invalid username"}, status_code=400)
     gap = req.get("gap_minutes", 15)

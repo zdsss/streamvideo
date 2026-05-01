@@ -438,12 +438,15 @@ async def startup_auto_merge():
                         changed = True
                         # 清理残留文件
                         for f in d.iterdir():
-                            if f.name.endswith("_merged.mp4") and f.stat().st_size == 0:
-                                f.unlink()
-                                logger.info(f"[{username}] Cleaned up empty merge output: {f.name}")
-                            elif f.name.startswith(".concat_") and f.name.endswith(".txt"):
-                                f.unlink()
-                                logger.info(f"[{username}] Cleaned up concat file: {f.name}")
+                            try:
+                                if f.name.endswith("_merged.mp4") and f.stat().st_size == 0:
+                                    f.unlink()
+                                    logger.info(f"[{username}] Cleaned up empty merge output: {f.name}")
+                                elif f.name.startswith(".concat_") and f.name.endswith(".txt"):
+                                    f.unlink()
+                                    logger.info(f"[{username}] Cleaned up concat file: {f.name}")
+                            except OSError:
+                                continue
                         logger.info(f"[{username}] Reset stale merging session: {s.session_id}")
             if changed:
                 manager._persist_sessions(username, sessions)
@@ -616,26 +619,35 @@ async def remux_stale_raw_files():
         return
     logger.info(f"发现 {len(raw_files)} 个未处理的 raw 文件，开始 remux...")
     for raw_path in raw_files:
-        mp4_path = raw_path.replace(".raw.mp4", ".mp4")
-        if os.path.exists(mp4_path):
-            os.remove(raw_path)
-            continue
-        size = os.path.getsize(raw_path)
-        if size < 100_000:
-            os.remove(raw_path)
-            continue
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
-            "-i", raw_path, "-c", "copy", "-movflags", "+faststart", mp4_path,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.wait()
-        if proc.returncode == 0 and os.path.exists(mp4_path):
-            os.remove(raw_path)
-            logger.info(f"  Remuxed: {os.path.basename(mp4_path)} ({size/1024/1024:.1f} MB)")
-        else:
-            os.rename(raw_path, mp4_path)
-            logger.info(f"  Renamed: {os.path.basename(mp4_path)}")
+        try:
+            mp4_path = raw_path.replace(".raw.mp4", ".mp4")
+            if os.path.exists(mp4_path):
+                os.remove(raw_path)
+                continue
+            size = os.path.getsize(raw_path)
+            if size < 100_000:
+                os.remove(raw_path)
+                continue
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
+                "-i", raw_path, "-c", "copy", "-movflags", "+faststart", mp4_path,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=120)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                logger.warning(f"  Remux timeout: {os.path.basename(raw_path)}")
+                continue
+            if proc.returncode == 0 and os.path.exists(mp4_path):
+                os.remove(raw_path)
+                logger.info(f"  Remuxed: {os.path.basename(mp4_path)} ({size/1024/1024:.1f} MB)")
+            else:
+                os.rename(raw_path, mp4_path)
+                logger.info(f"  Renamed: {os.path.basename(mp4_path)}")
+        except OSError as e:
+            logger.warning(f"  Remux error for {os.path.basename(raw_path)}: {e}")
 
 
 app = FastAPI(title="直播监控录制系统", lifespan=lifespan)
