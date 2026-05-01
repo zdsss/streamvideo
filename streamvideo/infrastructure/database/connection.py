@@ -10,7 +10,7 @@ from typing import Optional
 
 logger = logging.getLogger("database")
 
-DB_PATH = os.environ.get("SV_DB_PATH", str(Path(__file__).parent / "streamvideo.db"))
+DB_PATH = os.environ.get("SV_DB_PATH", str(Path(__file__).parent.parent.parent.parent / "streamvideo.db"))
 
 _lock = threading.Lock()
 _persistent_conn: Optional[sqlite3.Connection] = None
