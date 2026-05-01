@@ -159,20 +159,77 @@ ended → 自动合并 → merging → merged（72h 内可撤回）
 ## 项目结构
 
 ```
-server.py               # FastAPI 服务器 + REST API + WebSocket
-recorder.py             # 多平台录制引擎 + 会话追踪 + 弹幕启停
-database.py             # SQLite 数据库模块
-danmaku.py              # 弹幕采集（抖音 WS / B站 WS / Twitch IRC）
-highlight.py            # 高光检测引擎
-clipgen.py              # 短视频切片生成
-subtitle_gen.py         # Whisper 语音转字幕
-subtitle_translator.py  # Claude Haiku 字幕翻译（支持 7 种语言，带缓存）
-cover_gen.py            # 封面生成
-quota.py                # 配额管理
-static/index.html       # Web UI（Alpine.js + Tailwind CSS）
-config.json             # 配置文件
-recordings/             # 录制文件输出目录
+server.py                   # FastAPI 服务器入口（742 行，已模块化）
+streamvideo/                # 主包（分层架构）
+├── api/                    # API 层
+│   ├── routes/            # 路由模块（9 个，111 个端点）
+│   │   ├── auth.py        # 认证 (5 端点)
+│   │   ├── streams.py     # 录制流 (15 端点)
+│   │   ├── storage.py     # 存储 (26 端点)
+│   │   ├── highlights.py  # 高光 (21 端点)
+│   │   ├── clips.py       # 片段 (20 端点)
+│   │   ├── system.py      # 系统 (5 端点)
+│   │   ├── distribute.py  # 分发 (11 端点)
+│   │   ├── payment.py     # 支付 (5 端点)
+│   │   └── tasks.py       # 任务 (3 端点)
+│   ├── middleware/        # 中间件
+│   └── schemas/           # Pydantic 模型
+├── core/                   # 核心业务层
+│   ├── auth/              # 认证模块
+│   │   ├── manager.py     # AuthManager
+│   │   ├── quota.py       # QuotaManager
+│   │   └── payment.py     # PaymentManager
+│   ├── recorder/          # 录制引擎（13 个模块）
+│   │   ├── models.py      # 数据类和枚举
+│   │   ├── base.py        # BaseLiveRecorder
+│   │   ├── manager.py     # RecorderManager
+│   │   ├── uploader.py    # CloudUploader
+│   │   ├── notifier.py    # WebhookNotifier
+│   │   └── engines/       # 平台引擎（8 个）
+│   ├── processor/         # 处理器
+│   │   ├── highlight.py   # 高光检测
+│   │   ├── danmaku.py     # 弹幕抓取
+│   │   ├── clipgen.py     # 片段生成
+│   │   ├── subtitle_gen.py
+│   │   ├── subtitle_translator.py
+│   │   └── cover_gen.py
+│   └── distributor/       # 分发管理
+│       └── manager.py
+├── infrastructure/         # 基础设施层
+│   ├── database/          # 数据库（Mixin 模式，8 个模块）
+│   │   ├── connection.py  # 连接管理
+│   │   ├── database.py    # 主 Database 类
+│   │   └── repositories/  # 功能域 Mixin（6 个）
+│   ├── messaging/         # 消息队列
+│   │   └── task_queue.py
+│   ├── cache/             # 缓存
+│   └── storage/           # 存储
+├── shared/                 # 共享层
+│   ├── config.py          # 配置管理
+│   ├── constants.py       # 常量定义
+│   ├── errors.py          # 异常类
+│   ├── logger.py          # 日志工具
+│   └── utils/             # 工具函数
+└── tests/                  # 测试
+    ├── unit/
+    ├── integration/
+    └── e2e/
+
+static/index.html           # Web UI（Alpine.js + Tailwind CSS）
+config.json                 # 配置文件
+recordings/                 # 录制文件输出目录
+
+# 向后兼容（已添加 DeprecationWarning）
+recorder.py, database.py, auth.py, quota.py, payment.py, 
+distribute.py, highlight.py, danmaku.py, clipgen.py, 
+subtitle_gen.py, subtitle_translator.py, cover_gen.py, task_queue.py
 ```
+
+**架构说明**：
+- **分层架构**：API 层 → 核心业务层 → 基础设施层 → 共享层
+- **模块化**：73 个 Python 文件，11,755 行代码
+- **向后兼容**：根目录旧文件保留并添加 DeprecationWarning
+- **详细文档**：参见 `doc/refactor-complete-summary.md`
 
 ## 已知限制
 
