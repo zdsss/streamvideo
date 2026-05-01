@@ -35,37 +35,33 @@ class AfreecaTVRecorder(BaseLiveRecorder):
 
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
         # Strategy 1: streamlink (native AfreecaTV support)
-        try:
-            cmd = ["streamlink", "--json", "--retry-open", "2"]
-            if self.proxy:
-                cmd += ["--http-proxy", self.proxy]
-            cmd.append(self._get_stream_url())
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-            data = json.loads(stdout.decode())
-            if data.get("streams"):
-                return ModelStatus.PUBLIC, None, 0
-        except Exception:
-            logger.debug("suppressed exception", exc_info=True)
+        cmd = ["streamlink", "--json", "--retry-open", "2"]
+        if self.proxy:
+            cmd += ["--http-proxy", self.proxy]
+        cmd.append(self._get_stream_url())
+        rc, stdout, _ = await self._run_cmd(cmd, timeout=15)
+        if rc == 0 and stdout.strip():
+            try:
+                data = json.loads(stdout)
+                if data.get("streams"):
+                    return ModelStatus.PUBLIC, None, 0
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         # Strategy 2: yt-dlp fallback
         if self._manager and self._manager._ytdlp_available:
-            try:
-                cmd = ["yt-dlp", "--dump-json", "--no-download", self._get_stream_url()]
-                if self.proxy:
-                    cmd = ["yt-dlp", "--proxy", self.proxy, "--dump-json", "--no-download", self._get_stream_url()]
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-                if proc.returncode == 0 and stdout.strip():
-                    data = json.loads(stdout.decode())
+            cmd = ["yt-dlp", "--dump-json", "--no-download"]
+            if self.proxy:
+                cmd += ["--proxy", self.proxy]
+            cmd.append(self._get_stream_url())
+            rc, stdout, _ = await self._run_cmd(cmd, timeout=15)
+            if rc == 0 and stdout.strip():
+                try:
+                    data = json.loads(stdout)
                     viewers = data.get("view_count") or data.get("concurrent_view_count") or 0
                     return ModelStatus.PUBLIC, int(viewers) if viewers else None, 0
-            except Exception:
-                logger.debug("suppressed exception", exc_info=True)
+                except (json.JSONDecodeError, ValueError):
+                    pass
 
         return ModelStatus.OFFLINE, None, 0
 

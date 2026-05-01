@@ -1,24 +1,13 @@
-import asyncio
-import json
 import logging
-import os
-import re
-import shutil
-import time
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum
-from pathlib import Path
-from typing import Callable, Optional
-from urllib.parse import urlparse
+from typing import Optional
 
 import aiohttp
 
-logger = logging.getLogger("recorder")
-
 from streamvideo.core.recorder.models import *
 from streamvideo.core.recorder.base import BaseLiveRecorder
+
+logger = logging.getLogger("recorder")
+
 
 class BilibiliRecorder(BaseLiveRecorder):
     platform = "bilibili"
@@ -52,7 +41,6 @@ class BilibiliRecorder(BaseLiveRecorder):
                 title = info.get("title", "")
                 if title:
                     self._streamer_name = title
-                # 获取主播名
                 try:
                     uinfo_url = f"https://api.live.bilibili.com/live_user/v1/Master/info?uid={uid}"
                     async with session.get(uinfo_url, timeout=aiohttp.ClientTimeout(total=5)) as r2:
@@ -73,11 +61,3 @@ class BilibiliRecorder(BaseLiveRecorder):
         except Exception as e:
             logger.warning(f"[{self.info.username}] Bilibili check error: {e}")
             return ModelStatus.UNKNOWN, None, 0
-
-    async def _do_record(self, output_path: str) -> bool:
-        return await self._record_with_streamlink(
-            output_path, self._get_stream_url(), quality=self.quality
-        )
-
-
-# ========== Twitch ==========

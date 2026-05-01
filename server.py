@@ -392,6 +392,7 @@ async def lifespan(app: FastAPI):
     yield
 
     task_queue.stop()
+    await manager.webhook.close()
     try:
         await asyncio.wait_for(manager.stop_all(), timeout=30)
     except asyncio.TimeoutError:

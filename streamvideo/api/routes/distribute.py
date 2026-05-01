@@ -1,4 +1,5 @@
 """Distribute API 路由 - 分发管理、OAuth"""
+import logging
 import os
 import time
 import json
@@ -6,6 +7,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+
+logger = logging.getLogger("server")
 
 router = APIRouter()
 

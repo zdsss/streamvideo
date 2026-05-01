@@ -49,40 +49,35 @@ class TikTokRecorder(BaseLiveRecorder):
         url = self._get_stream_url()
 
         # Strategy 1: streamlink
-        try:
-            cmd = ["streamlink", "--json", "--retry-open", "2", url]
-            if self.proxy:
-                cmd = ["streamlink", "--json", "--http-proxy", self.proxy, "--retry-open", "2", url]
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-            data = json.loads(stdout.decode())
-            if data.get("streams"):
-                return ModelStatus.PUBLIC, None, 0
-            return ModelStatus.OFFLINE, None, 0
-        except Exception:
-            logger.debug("suppressed exception", exc_info=True)
+        cmd = ["streamlink", "--json", "--retry-open", "2"]
+        if self.proxy:
+            cmd += ["--http-proxy", self.proxy]
+        cmd.append(url)
+        rc, stdout, _ = await self._run_cmd(cmd, timeout=15)
+        if rc == 0 and stdout.strip():
+            try:
+                data = json.loads(stdout)
+                if data.get("streams"):
+                    return ModelStatus.PUBLIC, None, 0
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         # Strategy 2: yt-dlp
         if self._manager and self._manager._ytdlp_available:
-            try:
-                cmd = ["yt-dlp", "--dump-json", "--no-download", url]
-                if self.proxy:
-                    cmd = ["yt-dlp", "--proxy", self.proxy, "--dump-json", "--no-download", url]
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-                if proc.returncode == 0 and stdout.strip():
-                    info = json.loads(stdout.decode())
+            cmd = ["yt-dlp", "--dump-json", "--no-download"]
+            if self.proxy:
+                cmd += ["--proxy", self.proxy]
+            cmd.append(url)
+            rc, stdout, _ = await self._run_cmd(cmd, timeout=15)
+            if rc == 0 and stdout.strip():
+                try:
+                    info = json.loads(stdout)
                     viewers = info.get("view_count") or info.get("concurrent_view_count") or 0
                     is_live = info.get("is_live", False) or info.get("live_status") == "is_live"
                     if is_live or viewers:
                         return ModelStatus.PUBLIC, int(viewers) if viewers else None, 0
-                    return ModelStatus.OFFLINE, None, 0
-            except Exception:
-                logger.debug("suppressed exception", exc_info=True)
+                except (json.JSONDecodeError, ValueError):
+                    pass
 
         return ModelStatus.OFFLINE, None, 0
 

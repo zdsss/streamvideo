@@ -1,24 +1,10 @@
-import asyncio
-import json
 import logging
-import os
-import re
-import shutil
-import time
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum
-from pathlib import Path
-from typing import Callable, Optional
-from urllib.parse import urlparse
-
-import aiohttp
-
-logger = logging.getLogger("recorder")
 
 from streamvideo.core.recorder.models import *
 from streamvideo.core.recorder.base import BaseLiveRecorder
+
+logger = logging.getLogger("recorder")
+
 
 class TwitchRecorder(BaseLiveRecorder):
     platform = "twitch"
@@ -33,27 +19,4 @@ class TwitchRecorder(BaseLiveRecorder):
         return f"https://www.twitch.tv/{self.identifier}"
 
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
-        try:
-            cmd = ["streamlink", "--json", "--retry-open", "2"]
-            if self.proxy:
-                cmd += ["--http-proxy", self.proxy]
-            cmd.append(self._get_stream_url())
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-            data = json.loads(stdout.decode())
-            if data.get("streams"):
-                return ModelStatus.PUBLIC, None, 0
-            return ModelStatus.OFFLINE, None, 0
-        except Exception as e:
-            logger.debug(f"[{self.info.username}] Twitch check error: {e}")
-            return ModelStatus.UNKNOWN, None, 0
-
-    async def _do_record(self, output_path: str) -> bool:
-        return await self._record_with_streamlink(
-            output_path, self._get_stream_url(), quality=self.quality
-        )
-
-
-# ========== YouTube ==========
+        return await self._check_status_streamlink()

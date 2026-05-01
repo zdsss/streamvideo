@@ -55,7 +55,13 @@ class CloudUploader:
                     *cmd, env=env,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+                try:
+                    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    logger.warning(f"[{username}] Cloud upload timed out (600s)")
+                    return None
                 if proc.returncode == 0:
                     url = f"s3://{bucket}/{remote_key}"
                     logger.info(f"[{username}] Uploaded to cloud: {url}")
@@ -69,7 +75,13 @@ class CloudUploader:
                 proc = await asyncio.create_subprocess_exec(
                     *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+                try:
+                    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    logger.warning(f"[{username}] rclone upload timed out (600s)")
+                    return None
                 if proc.returncode == 0:
                     url = f"{remote}:{bucket}/{prefix}/{username}/{file_path.name}"
                     logger.info(f"[{username}] Uploaded via rclone: {url}")

@@ -298,12 +298,47 @@ class BaseLiveRecorder:
         raise NotImplementedError
 
     async def _do_record(self, output_path: str) -> bool:
-        """子类实现：执行录制，返回是否成功"""
-        raise NotImplementedError
+        """默认录制：使用 streamlink"""
+        return await self._record_with_streamlink(output_path, self._get_stream_url(), quality=self.quality)
 
     def _get_stream_url(self) -> str:
-        """子类实现：返回直播页面 URL"""
-        raise NotImplementedError
+        """默认流地址：直接使用 identifier"""
+        return self.identifier
+
+    async def _check_status_streamlink(self, url: str = "") -> tuple[ModelStatus, Optional[int], int]:
+        """Common streamlink --json status check (shared by twitch/huya/douyu/kick)"""
+        url = url or self._get_stream_url()
+        cmd = ["streamlink", "--json", "--retry-open", "2"]
+        if self.proxy:
+            cmd += ["--http-proxy", self.proxy]
+        cmd.append(url)
+        rc, stdout, _ = await self._run_cmd(cmd, timeout=15)
+        if rc == 0 and stdout.strip():
+            try:
+                data = json.loads(stdout)
+                if data.get("streams"):
+                    return ModelStatus.PUBLIC, None, 0
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return ModelStatus.OFFLINE, None, 0
+
+    @staticmethod
+    async def _run_cmd(cmd: list[str], timeout: float = 15) -> tuple[int, str, str]:
+        """Run subprocess with timeout + guaranteed cleanup. Returns (returncode, stdout, stderr)."""
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return proc.returncode, stdout.decode(), stderr.decode()
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return -1, "", "timeout"
+        except Exception:
+            proc.kill()
+            await proc.wait()
+            raise
 
     # ========== 通用方法 ==========
 

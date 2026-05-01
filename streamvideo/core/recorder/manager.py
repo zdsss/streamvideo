@@ -516,7 +516,12 @@ class RecorderManager:
                     "-of", "json", str(fp),
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                try:
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    raise
                 data = json.loads(stdout.decode())
                 streams = data.get("streams", [])
                 if not streams:
@@ -840,7 +845,7 @@ class RecorderManager:
             }
             logger.info(f"[{username}] Merged {len(filenames)} files -> {output_name} ({result_size/1024/1024:.1f} MB)")
             # 同步 session 状态（手动合并也能更新对应 session）
-            self._sync_sessions_after_merge(username, filenames, output_name)
+            await self._sync_sessions_after_merge(username, filenames, output_name)
             if delete_originals:
                 for fn in filenames:
                     fp = model_dir / fn
@@ -923,7 +928,12 @@ class RecorderManager:
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except asyncio.TimeoutError:
-                pass
+                logger.warning(f"ffmpeg did not exit after kill, force killing")
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:
+                    pass
         # 停止进度监控
         if stop_event:
             stop_event.set()
@@ -953,7 +963,12 @@ class RecorderManager:
                 "-of", "json", str(file_path),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return
             duration = float(json.loads(stdout.decode()).get("format", {}).get("duration", 0) or 0)
             seek_time = max(1, duration * 0.1)
             proc = await asyncio.create_subprocess_exec(
@@ -962,7 +977,11 @@ class RecorderManager:
                 str(thumb_path),
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
             )
-            await asyncio.wait_for(proc.wait(), timeout=30)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
         except Exception as e:
             logger.debug(f"[{username}] Thumbnail generation failed: {e}")
 
@@ -1019,7 +1038,7 @@ class RecorderManager:
                 "ffmpeg", "-hide_banner", "-encoders",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await proc.communicate()
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
             output = stdout.decode(errors="replace")
             for enc in candidates:
                 if enc in output:
@@ -1088,8 +1107,13 @@ class RecorderManager:
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
             )
-            _, err = await proc.communicate()
-            return proc.returncode, err
+            try:
+                _, err = await asyncio.wait_for(proc.communicate(), timeout=7200)
+                return proc.returncode, err
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return -1, b"timeout"
 
         try:
             rc, stderr = await _run_ffmpeg(encode_args)
@@ -1220,6 +1244,8 @@ class RecorderManager:
             else:
                 logger.warning(f"[{username}] Post-script exit {proc.returncode}: {stderr.decode()[:200]}")
         except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
             logger.warning(f"[{username}] Post-script timed out (300s)")
         except Exception as e:
             logger.warning(f"[{username}] Post-script error: {e}")
@@ -1364,24 +1390,25 @@ class RecorderManager:
         except Exception as e:
             logger.error(f"[{username}] FlashCut pipeline error: {e}")
 
-    def _sync_sessions_after_merge(self, username: str, merged_files: list[str], output_file: str):
+    async def _sync_sessions_after_merge(self, username: str, merged_files: list[str], output_file: str):
         """手动合并后，同步更新对应 session 状态为 merged"""
         rec = self.recorders.get(username)
         if not rec:
             return
-        merged_set = set(merged_files)
-        changed = False
-        for s in rec._sessions:
-            if s.status not in ("ended", "error"):
-                continue
-            if set(s.segments).issubset(merged_set) and s.segments:
-                s.status = "merged"
-                s.merged_file = output_file
-                s.merge_error = ""
-                changed = True
-                logger.info(f"[{username}] Session {s.session_id} synced to merged via manual merge")
-        if changed:
-            rec._save_sessions()
+        async with rec._session_lock:
+            merged_set = set(merged_files)
+            changed = False
+            for s in rec._sessions:
+                if s.status not in ("ended", "error"):
+                    continue
+                if set(s.segments).issubset(merged_set) and s.segments:
+                    s.status = "merged"
+                    s.merged_file = output_file
+                    s.merge_error = ""
+                    changed = True
+                    logger.info(f"[{username}] Session {s.session_id} synced to merged via manual merge")
+            if changed:
+                rec._save_sessions()
 
     def get_sessions(self, username: str) -> list[dict]:
         """获取指定主播的所有会话"""
@@ -1472,5 +1499,9 @@ class RecorderManager:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
 

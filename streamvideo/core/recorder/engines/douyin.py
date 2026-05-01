@@ -185,24 +185,21 @@ class DouyinRecorder(BaseLiveRecorder):
 
     async def _check_status_fallback(self) -> tuple[ModelStatus, Optional[int], int]:
         """Fallback: 用 streamlink 检测"""
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "streamlink", "--json", "--retry-open", "2", self._get_stream_url(),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-            data = json.loads(stdout.decode())
-            if data.get("streams"):
-                author = data.get("metadata", {}).get("author", "")
-                if author and not self._streamer_name:
-                    self._streamer_name = author
-                    self.info.username = author
-                    self._save_meta()
-                return ModelStatus.PUBLIC, int(self.room_id), 0
-            return ModelStatus.OFFLINE, int(self.room_id), 0
-        except Exception as e:
-            logger.debug(f"[{self.info.username}] Douyin streamlink fallback error: {e}")
-            return ModelStatus.UNKNOWN, None, 0
+        cmd = ["streamlink", "--json", "--retry-open", "2", self._get_stream_url()]
+        rc, stdout, _ = await self._run_cmd(cmd, timeout=15)
+        if rc == 0 and stdout.strip():
+            try:
+                data = json.loads(stdout)
+                if data.get("streams"):
+                    author = data.get("metadata", {}).get("author", "")
+                    if author and not self._streamer_name:
+                        self._streamer_name = author
+                        self.info.username = author
+                        self._save_meta()
+                    return ModelStatus.PUBLIC, int(self.room_id), 0
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return ModelStatus.OFFLINE, int(self.room_id), 0
 
     async def _do_record(self, output_path: str) -> bool:
         """录制抖音直播：API流地址 > 自定义流地址 > streamlink > Playwright+ffmpeg"""
@@ -240,7 +237,7 @@ class DouyinRecorder(BaseLiveRecorder):
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         )
         logger.info(f"[{self.info.username}] streamlink started (pid={self._active_proc.pid})")
-        await asyncio.sleep(8)
+        await self._sleep(8)
         if self._active_proc.returncode is not None:
             self._active_proc = None
             logger.info(f"[{self.info.username}] streamlink failed, trying Playwright + ffmpeg")

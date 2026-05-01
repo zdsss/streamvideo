@@ -134,6 +134,12 @@ class WebhookNotifier:
         except Exception:
             return False
 
+    async def close(self):
+        """Close the shared HTTP session"""
+        if self._http_session and not self._http_session.closed:
+            await self._http_session.close()
+            self._http_session = None
+
 
 # ========== 定时录制 ==========
 

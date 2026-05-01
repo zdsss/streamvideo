@@ -35,6 +35,17 @@ def _safe_username(username: str) -> bool:
     return ".." not in username and "/" not in username and "\\" not in username and username.strip() != ""
 
 
+def _safe_filename(f: str) -> bool:
+    """Reject path traversal and non-printable chars in filenames"""
+    if not f or ".." in f:
+        return False
+    if any(ord(c) < 32 for c in f):
+        return False
+    if f.startswith("/") or f.startswith("\\"):
+        return False
+    return True
+
+
 @router.get("/api/clips")
 async def get_all_clips(limit: int = 100):
     """列出所有片段（按用户名分组）"""
@@ -56,7 +67,7 @@ async def get_clips(username: str, limit: int = 50):
 @router.get("/api/clips/file/{username}/{filename}")
 async def get_clip_file(username: str, filename: str, download: int = 0):
     """播放/下载片段"""
-    if not _safe_username(username) or ".." in filename:
+    if not _safe_username(username) or not _safe_filename(filename):
         return JSONResponse({"error": "invalid"}, status_code=400)
     clip_path = Path(RECORDINGS_DIR) / username / "clips" / filename
     if clip_path.exists():
@@ -183,6 +194,8 @@ async def create_manual_clip(req: dict):
         return JSONResponse({"error": "参数无效"}, status_code=400)
     if not _safe_username(username):
         return JSONResponse({"error": "invalid username"}, status_code=400)
+    if not _safe_filename(filename):
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
 
     video_path = Path(RECORDINGS_DIR) / username / filename
     if not video_path.exists():

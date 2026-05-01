@@ -35,32 +35,28 @@ class GenericRecorder(BaseLiveRecorder):
 
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
         """2 级检测：streamlink → yt-dlp"""
-
-        # 策略1: streamlink（短超时 8s）
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "streamlink", "--json", "--retry-open", "2", self._get_stream_url(),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
-            data = json.loads(stdout.decode())
-            if data.get("streams"):
-                return ModelStatus.PUBLIC, None, 0
-        except Exception:
-            logger.debug("suppressed exception", exc_info=True)
+        cmd = ["streamlink", "--json", "--retry-open", "2"]
+        if self.proxy:
+            cmd += ["--http-proxy", self.proxy]
+        cmd.append(self._get_stream_url())
+        rc, stdout, _ = await self._run_cmd(cmd, timeout=8)
+        if rc == 0 and stdout.strip():
+            try:
+                data = json.loads(stdout)
+                if data.get("streams"):
+                    return ModelStatus.PUBLIC, None, 0
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         # 策略2: yt-dlp（短超时 8s）
         if self._manager and self._manager._ytdlp_available:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "yt-dlp", "--dump-json", "--no-download", self._get_stream_url(),
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
-                if proc.returncode == 0 and stdout.strip():
-                    return ModelStatus.PUBLIC, None, 0
-            except Exception:
-                logger.debug("suppressed exception", exc_info=True)
+            cmd = ["yt-dlp", "--dump-json", "--no-download"]
+            if self.proxy:
+                cmd += ["--proxy", self.proxy]
+            cmd.append(self._get_stream_url())
+            rc, stdout, _ = await self._run_cmd(cmd, timeout=8)
+            if rc == 0 and stdout.strip():
+                return ModelStatus.PUBLIC, None, 0
 
         return ModelStatus.OFFLINE, None, 0
 
