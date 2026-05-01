@@ -71,6 +71,17 @@ async def detect_highlights(username: str, req: dict = {}):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@router.get("/highlights")
+async def get_all_highlights(limit: int = 100):
+    from server import db
+
+    highlights = db.get_all_highlights(limit)
+    grouped: dict[str, list] = {}
+    for h in highlights:
+        grouped.setdefault(h["username"], []).append(h)
+    return JSONResponse([{"username": u, "highlights": hl} for u, hl in grouped.items()])
+
+
 @router.get("/highlights/{username}")
 async def get_highlights(username: str, limit: int = 50):
     from server import db

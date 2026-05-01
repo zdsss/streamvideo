@@ -44,11 +44,8 @@ def validate_filename(filename: str) -> str:
     return filename
 
 # 日志
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-    datefmt="%H:%M:%S",
-)
+from streamvideo.shared.logger import setup_logging
+setup_logging(level=app_settings.get("log_level", "INFO"), format=app_settings.get("log_format", "text"))
 logger = logging.getLogger("server")
 
 # 日志环形缓冲区（供 API 查询）
@@ -365,7 +362,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    await manager.stop_all()
+    try:
+        await asyncio.wait_for(manager.stop_all(), timeout=30)
+    except asyncio.TimeoutError:
+        logger.warning("manager.stop_all() timed out after 30s")
+    _stop_caffeinate()
     save_config()
     logger.info("服务已关闭")
 
@@ -586,6 +587,41 @@ async def remux_stale_raw_files():
 
 
 app = FastAPI(title="直播监控录制系统", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    path = request.url.path
+    if not path.startswith("/static") and path != "/api/health":
+        elapsed = int((time.time() - start) * 1000)
+        logger.info(f"{request.method} {path} {response.status_code} {elapsed}ms")
+    return response
+
+
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ========== 注册新架构路由（Phase 2 拆分） ==========
 # 注入依赖后注册路由，新旧端点并存，逐步迁移

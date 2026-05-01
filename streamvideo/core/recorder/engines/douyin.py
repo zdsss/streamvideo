@@ -382,6 +382,7 @@ class DouyinRecorder(BaseLiveRecorder):
         stall_count = 0
         last_bw_time = time.time()
         last_bw_size = 0
+        disk_check_counter = 0
         while not self._stop_event.is_set() and self._recording_active:
             await self._sleep(self.stall_check_interval)
             if self._active_proc.returncode is not None:
@@ -397,6 +398,12 @@ class DouyinRecorder(BaseLiveRecorder):
                     last_bw_time = now
                     last_bw_size = current_size
                 await self._notify()
+                # 磁盘空间监控（每 60 秒检查一次）
+                disk_check_counter += 1
+                if disk_check_counter % 12 == 0:
+                    disk_status = self._check_disk_during_recording()
+                    if disk_status == "critical":
+                        break
                 if current_size > 0 and current_size == last_size:
                     stall_count += 1
                     if stall_count * self.stall_check_interval >= self.stall_timeout:

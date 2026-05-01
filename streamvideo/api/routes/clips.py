@@ -35,6 +35,16 @@ def _safe_username(username: str) -> bool:
     return ".." not in username and "/" not in username and "\\" not in username and username.strip() != ""
 
 
+@router.get("/api/clips")
+async def get_all_clips(limit: int = 100):
+    """列出所有片段（按用户名分组）"""
+    clips = db.get_all_clips(limit)
+    grouped: dict[str, list] = {}
+    for c in clips:
+        grouped.setdefault(c["username"], []).append(c)
+    return JSONResponse([{"username": u, "clips": cl} for u, cl in grouped.items()])
+
+
 @router.get("/api/clips/{username}")
 async def get_clips(username: str, limit: int = 50):
     """列出片段"""

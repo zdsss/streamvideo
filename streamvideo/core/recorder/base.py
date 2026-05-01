@@ -6,6 +6,7 @@ import re
 import shutil
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -83,6 +84,9 @@ class BaseLiveRecorder:
 
         # 磁盘保护
         self._disk_critical = False
+
+        # 崩溃循环检测
+        self._restart_timestamps: deque[float] = deque(maxlen=10)
 
         # 弹幕抓取（默认禁用，各平台子类或 server 可覆盖）
         self._danmaku = None
@@ -410,6 +414,18 @@ class BaseLiveRecorder:
                         except Exception:
                             self._disk_critical = False
 
+                    # 崩溃循环检测：5次快速重启（300秒内）进入冷却
+                    if len(self._restart_timestamps) >= 5:
+                        recent = [t for t in self._restart_timestamps if time.time() - t < 300]
+                        if len(recent) >= 5:
+                            logger.warning(f"[{self.info.username}] Crash loop detected ({len(recent)} quick restarts in 5min), cooling down 600s")
+                            self._set_state(RecordingState.ERROR, "crash loop cooldown")
+                            await self._sleep(600)
+                            if self._stop_event.is_set():
+                                break
+                            self._restart_timestamps.clear()
+                            continue
+
                     # 创建或复用会话（加锁防止并发竞态）
                     async with self._session_lock:
                         if not self._current_session:
@@ -524,6 +540,13 @@ class BaseLiveRecorder:
                             self._save_sessions()
 
                     self.info.current_recording = None
+
+                    # 崩溃循环追踪：记录快速重启，成功长录制则重置
+                    if success and rec_info.duration and rec_info.duration > 60 and (
+                            os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 100_000):
+                        self._restart_timestamps.clear()
+                    else:
+                        self._restart_timestamps.append(time.time())
 
                     if not self._stop_event.is_set():
                         if self._last_stop_reason == "auto_split":

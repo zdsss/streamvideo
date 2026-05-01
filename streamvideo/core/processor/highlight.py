@@ -429,6 +429,29 @@ class HighlightDetector:
                     "type": sig.type, "strength": round(sig.strength, 2), "detail": sig.detail
                 })
 
+        # 1.5 跨信号关联加成：不同类型信号在 15 秒内重叠 → 1.5x
+        correlated_pairs: set[tuple[int, int]] = set()
+        sig_by_type: dict[str, list[int]] = {}
+        for sig in signals:
+            idx = int(sig.timestamp)
+            if 0 <= idx < timeline_len:
+                sig_by_type.setdefault(sig.type, []).append(idx)
+        type_list = list(sig_by_type.keys())
+        for i in range(len(type_list)):
+            for j in range(i + 1, len(type_list)):
+                for t_a in sig_by_type[type_list[i]]:
+                    for t_b in sig_by_type[type_list[j]]:
+                        if abs(t_a - t_b) <= 15:
+                            pair = (min(i, j), max(i, j))
+                            if pair not in correlated_pairs:
+                                correlated_pairs.add(pair)
+                                center = (t_a + t_b) // 2
+                                for off in range(-5, 6):
+                                    t = center + off
+                                    if 0 <= t < timeline_len:
+                                        decay = 1.0 / (1 + abs(off) * 0.3)
+                                        timeline[t] += 0.15 * decay
+
         # 2. 归一化
         max_score = max(timeline) if timeline else 0
         if max_score > 0:
