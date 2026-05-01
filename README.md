@@ -6,8 +6,10 @@
 
 | 平台 | 录制引擎 | 状态检测 | 断流阈值 | 备注 |
 |------|---------|---------|---------|------|
-| 抖音直播 | streamlink | webcast API | 30s | ⚠️ 实验性，受平台反爬限制 |
+| 抖音直播 | streamlink → ffmpeg | webcast API | 30s | ⚠️ 实验性，受平台反爬限制 |
 | B站直播 | streamlink | B站 API | 20s | |
+| TikTok | streamlink → yt-dlp | streamlink | 20s | 支持分享链接解析 |
+| AfreecaTV / Soop | streamlink → yt-dlp | streamlink | 20s | 含 Soop 国际版 |
 | Twitch | streamlink | streamlink | 20s | |
 | YouTube | streamlink | streamlink | 20s | |
 | 虎牙 | streamlink | streamlink | 20s | |
@@ -19,7 +21,10 @@
 
 ### 核心录制
 
-- **多平台录制** — 粘贴 URL 自动识别平台，支持 per-model 画质选择（best / 1080p / 720p / 480p / audio_only）
+- **多平台录制** — 粘贴 URL 自动识别平台（抖音 / B站 / TikTok / AfreecaTV / Twitch / YouTube / 虎牙 / 斗鱼 / Kick），支持 per-model 画质选择（best / 1080p / 720p / 480p / audio_only）
+- **重复任务检测** — 添加主播时自动检测重复 URL，返回冲突提示
+- **代理自动检测** — 从 `SV_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY` 环境变量自动识别，无需手动配置
+- **GPU 编码加速** — 自动检测可用硬件编码器（NVENC / VideoToolbox / VA-API / QuickSync），H.265 转码支持 GPU 加速，失败自动回退软件编码
 - **会话追踪（RecordingSession）** — 每次直播自动创建会话，持久化到 sessions.json + SQLite，断流重连时片段归属同一会话
 - **智能合并** — 会话结束后自动合并所有片段为一个 MP4，合并前 ffprobe 校验编码一致性，合并失败 30 秒自动重试
 - **合并撤回** — 自动/手动合并后 72 小时内可撤回，恢复原始分片
@@ -34,7 +39,7 @@
 - **合并进度** — WebSocket 实时推送合并进度百分比
 - **手动合并** — 按时间间隔分组，支持选择性排除片段
 - **合并撤回** — 72h 内可一键撤回，删除合并文件并恢复原始分片
-- **后处理流水线**：时间戳修复 → 可选智能重命名 → 可选 H.265 转码 → 可选云端上传
+- **后处理流水线**：时间戳修复 → 可选智能重命名 → 可选 H.265 转码（GPU 加速） → 可选保留原始文件 → 可选云端上传
 
 ### 弹幕采集
 
@@ -54,10 +59,19 @@
 
 - **Tailwind CSS**（本地构建）+ Alpine.js 单页应用
 - **Storage 页面** — 会话分组时间线视图、封面缩略图、合并进度条、撤回按钮
-- **Streams 页面** — 紧凑横向卡片，实时码率、合并状态
+- **Streams 页面** — 紧凑横向卡片 + 列表视图切换，实时码率、合并状态、重复任务检测
 - **Network 页面** — WebSocket / 代理状态、实时带宽
 - **System 页面** — 版本信息、录制引擎状态、日志查看器、配置导入/导出
 - **Highlights / Clips 页面** — 高光列表、切片管理、一键分发
+
+### 可靠性与安全
+
+- **FFmpeg 重连** — 录制时自动重连（网络断开 / HTTP 错误），最多重试 10 次
+- **Streamlink 重试** — `--retry-open 3 --ringbuffer-size 32M`，全平台引擎统一加固
+- **登录限流** — 5 次/分钟/IP，防止暴力破解
+- **会话密钥自动生成** — 首次启动自动生成并持久化到 `.session_key`，不再使用硬编码默认值
+- **全局错误处理** — 前端 JS 错误 + Promise 异常自动捕获并提示
+- **健康检查** — `GET /api/health` 轻量级端点，Docker HEALTHCHECK 已配置
 
 ## 技术栈
 
@@ -129,6 +143,7 @@ ANTHROPIC_API_KEY=sk-... python server.py
 | GET | `/api/config/export` | 导出配置 |
 | POST | `/api/config/import` | 导入配置（mode: merge\|overwrite） |
 | GET | `/api/disk` | 磁盘使用情况 |
+| GET | `/api/health` | 健康检查（Docker / 编排器） |
 | GET | `/api/storage/breakdown` | 按主播存储占用明细 |
 | WS | `/ws` | WebSocket 实时推送 |
 
@@ -185,7 +200,7 @@ streamvideo/                # 主包（分层架构）
 │   │   ├── manager.py     # RecorderManager
 │   │   ├── uploader.py    # CloudUploader
 │   │   ├── notifier.py    # WebhookNotifier
-│   │   └── engines/       # 平台引擎（8 个）
+│   │   └── engines/       # 平台引擎（10 个）
 │   ├── processor/         # 处理器
 │   │   ├── highlight.py   # 高光检测
 │   │   ├── danmaku.py     # 弹幕抓取
