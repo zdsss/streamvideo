@@ -17,6 +17,12 @@ import aiohttp
 
 logger = logging.getLogger("recorder")
 
+def _safe_task(coro):
+    """Create task with error logging instead of silent exception loss"""
+    task = asyncio.create_task(coro)
+    task.add_done_callback(lambda t: t.exception() and logger.error(f"Background task error: {t.exception()}") if not t.cancelled() else None)
+    return task
+
 from streamvideo.core.recorder.models import *
 
 class BaseLiveRecorder:
@@ -263,7 +269,7 @@ class BaseLiveRecorder:
                      f"({seg_count} segments, reason={self._last_stop_reason})")
         # Webhook: 录制结束
         if self._manager and self._manager.webhook:
-            asyncio.ensure_future(self._manager.webhook.notify("recording_end", {
+            _safe_task(self._manager.webhook.notify("recording_end", {
                 "username": self.info.username, "segments": seg_count,
                 "reason": self._last_stop_reason}))
         self._current_session = None
@@ -291,19 +297,19 @@ class BaseLiveRecorder:
                 logger.warning(f"[{self.info.username}] Disk critically low ({free/1024/1024:.0f}MB)")
                 self._disk_critical = True
                 if self._manager and self._manager.webhook:
-                    asyncio.ensure_future(self._manager.webhook.notify("disk_low", {
+                    _safe_task(self._manager.webhook.notify("disk_low", {
                         "username": self.info.username, "free_mb": int(free/1024/1024), "critical": True}))
                 if self._manager and hasattr(self._manager, '_disk_warning_callback') and self._manager._disk_warning_callback:
-                    asyncio.ensure_future(self._manager._disk_warning_callback(
+                    _safe_task(self._manager._disk_warning_callback(
                         self.info.username, int(free/1024/1024), True))
                 return "critical"
             elif free < 10 * 1024 * 1024 * 1024:
                 logger.warning(f"[{self.info.username}] Disk space low: {free/1024/1024:.0f}MB remaining")
                 if self._manager and self._manager.webhook:
-                    asyncio.ensure_future(self._manager.webhook.notify("disk_low", {
+                    _safe_task(self._manager.webhook.notify("disk_low", {
                         "username": self.info.username, "free_mb": int(free/1024/1024)}))
                 if self._manager and hasattr(self._manager, '_disk_warning_callback') and self._manager._disk_warning_callback:
-                    asyncio.ensure_future(self._manager._disk_warning_callback(
+                    _safe_task(self._manager._disk_warning_callback(
                         self.info.username, int(free/1024/1024), False))
                 return "warning"
         except Exception:
@@ -335,7 +341,7 @@ class BaseLiveRecorder:
         self.info.state = state
         self.info.error_msg = error
         if self.on_state_change:
-            asyncio.ensure_future(self._notify())
+            _safe_task(self._notify())
 
     async def start(self):
         if self._task and not self._task.done():
@@ -424,7 +430,7 @@ class BaseLiveRecorder:
                     self._set_state(RecordingState.RECORDING)
                     # Webhook: 录制开始
                     if self._manager and self._manager.webhook:
-                        asyncio.ensure_future(self._manager.webhook.notify("recording_start", {
+                        _safe_task(self._manager.webhook.notify("recording_start", {
                             "username": self.info.username, "platform": self.info.platform}))
                     _, mp4_path = self._make_output_paths()
 
@@ -507,7 +513,7 @@ class BaseLiveRecorder:
                             if free < 1024 * 1024 * 1024:  # < 1GB
                                 logger.warning(f"[{self.info.username}] Low disk space: {free/1024/1024:.0f}MB remaining")
                                 if self._manager and self._manager.webhook:
-                                    asyncio.ensure_future(self._manager.webhook.notify("disk_low", {
+                                    _safe_task(self._manager.webhook.notify("disk_low", {
                                         "username": self.info.username, "free_mb": int(free/1024/1024)}))
                         except Exception:
                             logger.debug("suppressed exception", exc_info=True)
@@ -615,7 +621,8 @@ class BaseLiveRecorder:
 
     async def _record_with_streamlink(self, output_path: str, stream_url: str, quality: str = "best") -> bool:
         """通用 streamlink 录制"""
-        cmd = ["streamlink", "--hls-live-edge", "6", "--stream-segment-attempts", "3"]
+        cmd = ["streamlink", "--hls-live-edge", "6", "--stream-segment-attempts", "3",
+               "--retry-open", "3", "--ringbuffer-size", "32M"]
         if self.proxy:
             cmd += ["--http-proxy", self.proxy]
         cmd += [stream_url, quality, "-o", output_path]

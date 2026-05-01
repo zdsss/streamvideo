@@ -2346,24 +2346,37 @@ function app() {
       this._token = new URLSearchParams(location.search).get('token') || '';
       this.checkAuth();
       this.connectWS(); this.fetchModels(); this.fetchSettings(); this.fetchDisk();
-      this.ticker = setInterval(() => {
-        if (this.models.some(m => m.state === 'recording' || m.state === 'reconnecting'))
-          this.models = [...this.models];
-      }, 5000);
-      // 1 秒录制时长刷新
-      setInterval(() => { this._recTick = Date.now(); }, 1000);
-      setInterval(() => { this.thumbTs = Date.now(); }, 15000);
-      setInterval(() => { this.fetchDisk(); }, 60000);
+      // Removed: WebSocket push handles model updates
+      // 1 秒录制时长刷新 — only tick when recording
+      setInterval(() => {
+        if (this.models.some(m => m.state === 'recording')) this._recTick = Date.now();
+      }, 1000);
+      setInterval(() => {
+        if (this.currentPage === 'streams') this.thumbTs = Date.now();
+      }, 15000);
+      setInterval(() => {
+        if (this.currentPage === 'storage' || this.currentPage === 'system') this.fetchDisk();
+      }, 60000);
       if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+
+      // Global error handlers
+      window.addEventListener('error', (e) => {
+        console.error('Global error:', e);
+        this.showToast('JS Error: ' + (e.message || 'Unknown error'), 'error');
+      });
+      window.addEventListener('unhandledrejection', (e) => {
+        console.error('Unhandled rejection:', e);
+        this.showToast('Promise Error: ' + (e.reason?.message || e.reason || 'Unknown'), 'error');
+      });
     },
 
-    _apiFetch(url, opts) {
-      // 自动附加 token
+    _apiFetch(url, opts = {}) {
+      // 使用 Authorization header 传递 token
+      const headers = opts.headers || {};
       if (this._token) {
-        const sep = url.includes('?') ? '&' : '?';
-        url += sep + 'token=' + this._token;
+        headers['Authorization'] = 'Bearer ' + this._token;
       }
-      return fetch(url, opts);
+      return fetch(url, { ...opts, headers });
     },
 
     async fetchSettings() { try { const r = await this._apiFetch('/api/settings'); if (r.ok) { const s = await r.json(); this.settings = { ...this.settings, ...s }; } } catch(e) {} },
@@ -2685,8 +2698,7 @@ function app() {
 
     connectWS() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const tokenParam = this._token ? `?token=${this._token}` : '';
-      try { this.ws = new WebSocket(`${proto}//${location.host}/ws${tokenParam}`); } catch(e) { return; }
+      try { this.ws = new WebSocket(`${proto}//${location.host}/ws`); } catch(e) { return; }
       this.ws.onopen = () => {
         this.wsConnected = true; this._wsRetryDelay = 3000;
         // 断线恢复：获取遗漏事件
@@ -3215,7 +3227,7 @@ function app() {
       const token = localStorage.getItem('sv_session');
       if (!token) return;
       try {
-        const r = await fetch(`/api/auth/me?session_token=${token}`);
+        const r = await fetch('/api/auth/me', { headers: { 'Authorization': 'Bearer ' + token } });
         if (r.ok) {
           const d = await r.json();
           this.authUser = d.user;

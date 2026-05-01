@@ -50,9 +50,9 @@ class TikTokRecorder(BaseLiveRecorder):
 
         # Strategy 1: streamlink
         try:
-            cmd = ["streamlink", "--json", url]
+            cmd = ["streamlink", "--json", "--retry-open", "2", url]
             if self.proxy:
-                cmd = ["streamlink", "--json", "--http-proxy", self.proxy, url]
+                cmd = ["streamlink", "--json", "--http-proxy", self.proxy, "--retry-open", "2", url]
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )

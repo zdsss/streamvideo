@@ -30,4 +30,6 @@ EXPOSE 8080
 # 环境变量
 ENV PYTHONUNBUFFERED=1
 
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -f http://localhost:8080/api/health || exit 1
+
 CMD ["python", "server.py"]

@@ -27,3 +27,6 @@ static/input.css
 
 # PID files
 .pids/
+
+# Session key (auto-generated)
+.session_key

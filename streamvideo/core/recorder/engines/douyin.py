@@ -187,7 +187,7 @@ class DouyinRecorder(BaseLiveRecorder):
         """Fallback: 用 streamlink 检测"""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "streamlink", "--json", self._get_stream_url(),
+                "streamlink", "--json", "--retry-open", "2", self._get_stream_url(),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
@@ -231,7 +231,8 @@ class DouyinRecorder(BaseLiveRecorder):
         if cookie_str:
             extra_args = ["--http-cookie", cookie_str]
 
-        cmd = ["streamlink", "--hls-live-edge", "6", "--stream-segment-attempts", "3"]
+        cmd = ["streamlink", "--hls-live-edge", "6", "--stream-segment-attempts", "3",
+               "--retry-open", "3", "--ringbuffer-size", "32M"]
         cmd += extra_args
         cmd += [self._get_stream_url(), q, "-o", output_path]
 
@@ -361,6 +362,12 @@ class DouyinRecorder(BaseLiveRecorder):
         """用 ffmpeg 直接录制流"""
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
+            "-reconnect", "1", "-reconnect_streamed", "1",
+            "-reconnect_on_network_error", "1",
+            "-reconnect_on_http_error", "4xx,5xx",
+            "-reconnect_delay_max", "30", "-reconnect_max_retries", "10",
+            "-thread_queue_size", "1024", "-probesize", "32",
+            "-analyzeduration", "0", "-max_muxing_queue_size", "1024",
             "-headers", f"User-Agent: {self.user_agent}\r\nReferer: https://live.douyin.com/\r\n",
             "-i", stream_url,
             "-c", "copy", "-movflags", "+faststart",

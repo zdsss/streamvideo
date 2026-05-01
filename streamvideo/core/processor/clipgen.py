@@ -81,7 +81,7 @@ class ClipGenerator:
         if force_watermark and not self.config.watermark:
             self.config.watermark = "FlashCut"
 
-        cmd = self._build_ffmpeg_cmd(video_path, output_file, start, duration, ass_path)
+        cmd = await self._build_ffmpeg_cmd(video_path, output_file, start, duration, ass_path)
 
         # 恢复水印设置
         self.config.watermark = original_watermark
@@ -153,17 +153,17 @@ class ClipGenerator:
                 await progress_callback(i + 1, len(highlights), result)
         return results
 
-    def _is_vertical(self, video_path: Path) -> bool:
+    async def _is_vertical(self, video_path: Path) -> bool:
         """检测视频是否为竖屏（w/h < 1）"""
         try:
-            import subprocess
-            result = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
-                 "-show_entries", "stream=width,height", "-of", "json", str(video_path)],
-                capture_output=True, text=True, timeout=10,
+            proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height", "-of", "json", str(video_path),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
             import json as _json
-            data = _json.loads(result.stdout)
+            data = _json.loads(stdout.decode())
             streams = data.get("streams", [])
             if streams:
                 w = int(streams[0].get("width", 1920))
@@ -173,7 +173,7 @@ class ClipGenerator:
             pass
         return False  # 默认假设横屏
 
-    def _build_ffmpeg_cmd(self, video_path: Path, output_path: Path,
+    async def _build_ffmpeg_cmd(self, video_path: Path, output_path: Path,
                           start: float, duration: float,
                           ass_path: Optional[Path] = None) -> list[str]:
         """构建 ffmpeg 命令"""
@@ -189,7 +189,7 @@ class ClipGenerator:
         vf_parts = []
 
         # 检测输入视频宽高比（用于智能裁剪决策）
-        input_is_vertical = self._is_vertical(video_path)
+        input_is_vertical = await self._is_vertical(video_path)
 
         if self.config.format == "vertical":
             if input_is_vertical:

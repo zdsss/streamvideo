@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -20,6 +21,15 @@ except ImportError:
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+def _get_or_generate_secret() -> str:
+    secret_file = BASE_DIR / ".session_key"
+    if secret_file.exists():
+        return secret_file.read_text().strip()
+    secret = secrets.token_hex(32)
+    secret_file.write_text(secret)
+    return secret
 
 
 class _SettingsBase(BaseSettings if _HAS_PYDANTIC_SETTINGS else BaseModel):
@@ -74,7 +84,7 @@ class StorageConfig(_SettingsBase):
 class AuthConfig(_SettingsBase):
     """认证配置"""
     sv_token: str = Field(default="", description="API 访问 Token（可选）")
-    session_secret: str = Field(default="streamvideo-default-secret", description="会话密钥")
+    session_secret: str = Field(default_factory=_get_or_generate_secret, description="会话密钥")
     session_ttl_hours: int = Field(default=24 * 7, description="会话有效期（小时）")
 
 

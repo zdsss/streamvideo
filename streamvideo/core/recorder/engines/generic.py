@@ -39,7 +39,7 @@ class GenericRecorder(BaseLiveRecorder):
         # 策略1: streamlink（短超时 8s）
         try:
             proc = await asyncio.create_subprocess_exec(
-                "streamlink", "--json", self._get_stream_url(),
+                "streamlink", "--json", "--retry-open", "2", self._get_stream_url(),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)

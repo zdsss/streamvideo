@@ -384,20 +384,20 @@ class DanmakuCapture:
         }
 
     def get_peak_density(self, window: int = 10) -> float:
-        """计算弹幕峰值密度（消息/秒）"""
+        """计算弹幕峰值密度（消息/秒）—— O(n) two-pointer"""
         if not self._messages:
             return 0
-        chat_msgs = [m for m in self._messages if m.type == "chat"]
-        if not chat_msgs:
+        timestamps = sorted(m.timestamp for m in self._messages if m.type == "chat")
+        n = len(timestamps)
+        if n == 0:
             return 0
-        max_density = 0
-        for i, msg in enumerate(chat_msgs):
-            t_start = msg.timestamp
-            t_end = t_start + window
-            count = sum(1 for m in chat_msgs[i:] if m.timestamp <= t_end)
-            density = count / window
-            max_density = max(max_density, density)
-        return max_density
+        max_count = 0
+        left = 0
+        for right in range(n):
+            while timestamps[right] - timestamps[left] > window:
+                left += 1
+            max_count = max(max_count, right - left + 1)
+        return max_count / window
 
     def get_density_timeline(self, window: int = 10) -> list[dict]:
         """计算弹幕密度时间线（用于可视化）"""
@@ -599,17 +599,21 @@ class BilibiliDanmakuCapture:
     def get_stats(self) -> dict:
         chat = sum(1 for m in self._messages if m.type == "chat")
         gift = sum(1 for m in self._messages if m.type == "gift")
-        peak = 0.0
-        if self._messages:
-            window = 10
-            chat_msgs = [m for m in self._messages if m.type == "chat"]
-            for i, msg in enumerate(chat_msgs):
-                count = sum(1 for m in chat_msgs[i:] if m.timestamp <= msg.timestamp + window)
-                peak = max(peak, count / window)
-        return {"total": len(self._messages), "chat": chat, "gift": gift, "peak_density": round(peak, 2)}
+        return {"total": len(self._messages), "chat": chat, "gift": gift, "peak_density": round(self.get_peak_density(), 2)}
 
     def get_peak_density(self, window: int = 10) -> float:
-        return self.get_stats()["peak_density"]
+        """O(n) two-pointer peak density for Bilibili"""
+        timestamps = sorted(m.timestamp for m in self._messages if m.type == "chat")
+        n = len(timestamps)
+        if n == 0:
+            return 0.0
+        max_count = 0
+        left = 0
+        for right in range(n):
+            while timestamps[right] - timestamps[left] > window:
+                left += 1
+            max_count = max(max_count, right - left + 1)
+        return max_count / window
 
     def find_keyword_matches(self, keywords: list[str]) -> list[dict]:
         results = []
@@ -742,16 +746,21 @@ class TwitchDanmakuCapture:
 
     def get_stats(self) -> dict:
         chat = sum(1 for m in self._messages if m.type == "chat")
-        peak = 0.0
-        if self._messages:
-            window = 10
-            for i, msg in enumerate(self._messages):
-                count = sum(1 for m in self._messages[i:] if m.timestamp <= msg.timestamp + window)
-                peak = max(peak, count / window)
-        return {"total": len(self._messages), "chat": chat, "gift": 0, "peak_density": round(peak, 2)}
+        return {"total": len(self._messages), "chat": chat, "gift": 0, "peak_density": round(self.get_peak_density(), 2)}
 
     def get_peak_density(self, window: int = 10) -> float:
-        return self.get_stats()["peak_density"]
+        """O(n) two-pointer peak density for Twitch"""
+        timestamps = sorted(m.timestamp for m in self._messages if m.type == "chat")
+        n = len(timestamps)
+        if n == 0:
+            return 0.0
+        max_count = 0
+        left = 0
+        for right in range(n):
+            while timestamps[right] - timestamps[left] > window:
+                left += 1
+            max_count = max(max_count, right - left + 1)
+        return max_count / window
 
     def find_keyword_matches(self, keywords: list[str]) -> list[dict]:
         results = []

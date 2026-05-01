@@ -18,7 +18,7 @@ import aiohttp
 logger = logging.getLogger("recorder")
 
 from streamvideo.core.recorder.models import *
-from streamvideo.core.recorder.base import BaseLiveRecorder
+from streamvideo.core.recorder.base import BaseLiveRecorder, _safe_task
 from streamvideo.shared.config import _detect_system_proxy
 from streamvideo.core.recorder.uploader import CloudUploader
 from streamvideo.core.recorder.notifier import WebhookNotifier
@@ -127,7 +127,7 @@ class RecorderManager:
     def remove_model(self, username: str):
         if username in self.recorders:
             rec = self.recorders.pop(username)
-            asyncio.ensure_future(rec.stop())
+            _safe_task(rec.stop())
 
     async def start_model(self, username: str):
         if username in self.recorders:
@@ -825,7 +825,7 @@ class RecorderManager:
 
             # 后处理：自动生成缩略图
             if output_path.exists():
-                asyncio.ensure_future(self._generate_file_thumbnail(output_path, username))
+                _safe_task(self._generate_file_thumbnail(output_path, username))
 
             self._active_merges[merge_id] = {
                 "status": "done", "filename": output_name, "size": result_size,

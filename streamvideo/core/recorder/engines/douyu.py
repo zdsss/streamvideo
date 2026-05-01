@@ -34,9 +34,9 @@ class DouyuRecorder(BaseLiveRecorder):
 
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
         try:
-            cmd = ["streamlink", "--json", self._get_stream_url()]
+            cmd = ["streamlink", "--json", "--retry-open", "2", self._get_stream_url()]
             if self.proxy:
-                cmd = ["streamlink", "--json", "--http-proxy", self.proxy, self._get_stream_url()]
+                cmd = ["streamlink", "--json", "--http-proxy", self.proxy, "--retry-open", "2", self._get_stream_url()]
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )

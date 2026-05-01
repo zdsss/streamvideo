@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -11,15 +12,21 @@ logger = logging.getLogger("database")
 
 DB_PATH = os.environ.get("SV_DB_PATH", str(Path(__file__).parent / "streamvideo.db"))
 
+_lock = threading.Lock()
+_persistent_conn: Optional[sqlite3.Connection] = None
+
 
 def get_db(db_path: str = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
+    global _persistent_conn
+    with _lock:
+        if _persistent_conn is None:
+            _persistent_conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+            _persistent_conn.row_factory = sqlite3.Row
+            _persistent_conn.execute("PRAGMA journal_mode=WAL")
+            _persistent_conn.execute("PRAGMA foreign_keys=ON")
+            _persistent_conn.execute("PRAGMA busy_timeout=5000")
+            _persistent_conn.execute("PRAGMA synchronous=NORMAL")
+        return _persistent_conn
 
 
 def init_db(db_path: str = DB_PATH):
@@ -237,7 +244,6 @@ def init_db(db_path: str = DB_PATH):
         CREATE INDEX IF NOT EXISTS idx_credentials_user_platform ON platform_credentials(user_id, platform);
     """)
     conn.commit()
-    conn.close()
     logger.info(f"Database initialized: {db_path}")
 
 

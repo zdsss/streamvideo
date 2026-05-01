@@ -1,5 +1,6 @@
 """System API 路由 - 系统配置、Whisper 检查、配置导入导出"""
-import subprocess
+import asyncio
+import logging
 import time
 import json
 from pathlib import Path
@@ -7,7 +8,14 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 
+logger = logging.getLogger("system")
+
 router = APIRouter()
+
+_start_time = time.time()
+_tool_versions_cache: dict = {}
+_tool_versions_ts: float = 0
+_TOOL_VERSIONS_TTL: float = 300
 
 # 全局依赖
 db = None
@@ -33,6 +41,17 @@ def init_system_router(database, recorder_manager, settings, recordings_dir, def
     broadcast = ws_broadcast
 
 
+@router.get("/api/health")
+async def health_check():
+    """Lightweight health check for Docker/orchestrators"""
+    return JSONResponse({
+        "status": "ok",
+        "recordings": sum(1 for r in manager.recorders.values() if r.state.value == "recording"),
+        "models": len(manager.recorders),
+        "uptime": int(time.time() - _start_time),
+    })
+
+
 @router.get("/api/system")
 async def get_system():
     """获取系统信息"""
@@ -41,16 +60,21 @@ async def get_system():
 
     global _tool_versions_cache, _tool_versions_ts
     if time.time() - _tool_versions_ts > _TOOL_VERSIONS_TTL:
-        def _get_version(cmd):
+        async def _get_version(cmd):
             try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-                return r.stdout.strip().split('\n')[0][:50]
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                return stdout.decode().strip().split('\n')[0][:50]
             except Exception:
                 return None
 
-        ffmpeg_v = _get_version(["ffmpeg", "-version"])
-        streamlink_v = _get_version(["streamlink", "--version"])
-        ytdlp_v = _get_version(["yt-dlp", "--version"])
+        ffmpeg_v, streamlink_v, ytdlp_v = await asyncio.gather(
+            _get_version(["ffmpeg", "-version"]),
+            _get_version(["streamlink", "--version"]),
+            _get_version(["yt-dlp", "--version"]),
+        )
         _tool_versions_cache = {
             "ffmpeg_version": ffmpeg_v.replace("ffmpeg version ", "") if ffmpeg_v else "-",
             "ffmpeg_available": shutil.which("ffmpeg") is not None,

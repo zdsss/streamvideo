@@ -34,7 +34,7 @@ class YouTubeRecorder(BaseLiveRecorder):
 
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
         try:
-            cmd = ["streamlink", "--json"]
+            cmd = ["streamlink", "--json", "--retry-open", "2"]
             if self.proxy:
                 cmd += ["--http-proxy", self.proxy]
             cmd.append(self._get_stream_url())
