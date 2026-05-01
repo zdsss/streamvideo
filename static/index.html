@@ -72,7 +72,7 @@ function _ri(root){
 document.addEventListener('DOMContentLoaded',()=>{
   _ri();
   let _riPending=false;
-  new MutationObserver(()=>{ if(!_riPending){_riPending=true; requestAnimationFrame(()=>{_ri();_riPending=false;});} }).observe(document.body,{childList:true,subtree:true});
+  new MutationObserver(()=>{ if(!_riPending){_riPending=true; requestAnimationFrame(()=>{_ri();_riPending=false;});} }).observe(document.body,{childList:true});
 });
 </script>
 <style>
@@ -442,7 +442,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
       <!-- Thumbnail (left, 120px, 4:3) -->
       <div class="relative w-[120px] shrink-0 aspect-[4/3] cursor-pointer" @click="openRecordings(m.username)">
         <template x-if="m.thumbnail_url">
-          <img class="w-full h-full object-cover" loading="lazy" :src="m.thumbnail_url + '?t=' + thumbTs" @error="$el.style.display='none'" @load="$el.style.display=''"/>
+          <img class="w-full h-full object-cover" loading="lazy" :src="m.thumbnail_url + '?t=' + thumbTs" :alt="m.username + ' thumbnail'" @error="$el.style.display='none'" @load="$el.style.display=''"/>
         </template>
         <template x-if="!m.thumbnail_url">
           <div class="w-full h-full flex items-center justify-center text-sm font-bold text-white/70" :style="'background:' + nameColor(m.username)" x-text="m.username.slice(0,4)"></div>
@@ -603,7 +603,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
       <!-- Merge status -->
       <span class="text-[10px] w-16 text-center shrink-0" :class="{'text-tertiary':m.merge_status==='merging','text-[#00b894]':m.merge_status==='merged','text-error':m.merge_status==='failed'}" x-text="m.merge_status==='merging'?'合并中'+(m.merge_progress?Math.round(m.merge_progress*100)+'%':''):m.merge_status==='merged'?'已合并':m.merge_status==='failed'?'合并失败':''"></span>
       <!-- Actions -->
-      <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+      <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0">
         <template x-if="m.state==='recording'">
           <button class="p-1 rounded hover:bg-error/20 text-error" @click="stopModel(m.username)" title="停止"><span class="material-symbols-outlined text-sm">stop</span></button>
         </template>
@@ -692,7 +692,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
     <p class="px-5 py-8 text-center text-on-surface-variant text-sm">暂无录制数据</p>
   </template>
   <div class="divide-y divide-outline-variant/5">
-    <template x-for="item in storageBreakdown.filter(i => !storageSearch || i.username.toLowerCase().includes(storageSearch.toLowerCase()))" :key="item.username">
+    <template x-for="item in filteredStorageBreakdown" :key="item.username">
       <div>
         <div class="px-5 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer"
           @click="storageExpandedUser = storageExpandedUser===item.username ? null : item.username; if(storageExpandedUser===item.username) loadStorageFiles(item.username)">
@@ -754,7 +754,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
                       @click.stop="storageExpandedSession = storageExpandedSession===sess.session_id ? null : sess.session_id">
                       <!-- 封面缩略图 -->
                       <div class="flex-shrink-0 w-12 h-8 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center">
-                        <img x-show="sess.cover_url" :src="sess.cover_url" class="w-full h-full object-cover" loading="lazy"/>
+                        <img x-show="sess.cover_url" :src="sess.cover_url" :alt="'Session ' + (sess.session_id || '')" class="w-full h-full object-cover" loading="lazy"/>
                         <span x-show="!sess.cover_url" class="material-symbols-outlined text-on-surface-variant text-xs"
                           :class="{'text-[#00b894]': sess.status==='merged', 'text-warning': sess.status==='ended'||sess.status==='error', 'text-primary': sess.status==='merging'}"
                           x-text="sess.status==='merged'?'check_circle':sess.status==='merging'?'sync':sess.status==='error'?'error':'video_file'"></span>
@@ -825,7 +825,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
                         <div class="flex items-center gap-2 px-6 py-1.5 hover:bg-surface-container/30 transition-colors">
                           <div class="flex-shrink-0 w-10 h-7 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center cursor-pointer"
                             @click.stop="playWithSubtitles(item.username, f.filename)">
-                            <img x-show="f.thumbnail_url" :src="f.thumbnail_url" class="w-full h-full object-cover" loading="lazy"/>
+                            <img x-show="f.thumbnail_url" :src="f.thumbnail_url" :alt="f.filename || 'thumbnail'" class="w-full h-full object-cover" loading="lazy"/>
                             <span x-show="!f.thumbnail_url" class="material-symbols-outlined text-on-surface-variant text-xs">video_file</span>
                           </div>
                           <div class="flex-1 min-w-0">
@@ -858,7 +858,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
                   <div class="flex items-center gap-2 px-5 py-2 hover:bg-surface-container/50 transition-colors">
                     <div class="flex-shrink-0 w-12 h-8 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center cursor-pointer"
                       @click.stop="playWithSubtitles(item.username, f.filename)">
-                      <img x-show="f.thumbnail_url" :src="f.thumbnail_url" class="w-full h-full object-cover" loading="lazy"/>
+                      <img x-show="f.thumbnail_url" :src="f.thumbnail_url" :alt="f.filename || 'thumbnail'" class="w-full h-full object-cover" loading="lazy"/>
                       <span x-show="!f.thumbnail_url" class="material-symbols-outlined text-on-surface-variant text-sm">video_file</span>
                     </div>
                     <div class="flex-1 min-w-0">
@@ -920,7 +920,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
         <button class="text-xs text-primary font-medium hover:underline" @click="currentPage='streams'; $nextTick(()=>openRecordings(item.username))">查看</button>
       </div>
     </template>
-    <p class="text-xs text-on-surface-variant" x-show="storageBreakdown.filter(i=>(i.unmerged_count>0&&i.merged_count>0)||(i.oldest_file>0&&(Date.now()/1000-i.oldest_file)>30*86400)).length===0">暂无清理建议</p>
+    <p class="text-xs text-on-surface-variant" x-show="!hasCleanupSuggestions">暂无清理建议</p>
   </div>
 </div>
 <!-- 智能清理建议面板 -->
@@ -1008,7 +1008,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
     <h3 class="text-sm font-bold">实时带宽监控</h3>
   </div>
   <div class="divide-y divide-outline-variant/5">
-    <template x-for="m in models.filter(m=>m.state==='recording')" :key="m.username">
+    <template x-for="m in recordingModels" :key="m.username">
       <div class="px-6 py-3 flex items-center justify-between">
         <div class="flex items-center gap-3">
           <span class="w-2 h-2 rounded-full bg-error animate-pulse"></span>
@@ -1017,7 +1017,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
         <span class="text-sm font-mono text-primary" x-text="m.current_recording?.bandwidth_kbps ? m.current_recording.bandwidth_kbps.toFixed(0)+' kbps' : '-'"></span>
       </div>
     </template>
-    <template x-if="models.filter(m=>m.state==='recording').length===0">
+    <template x-if="recordingModels.length===0">
       <div class="px-6 py-8 text-center text-on-surface-variant text-sm">当前无录制中的流</div>
     </template>
   </div>
@@ -2248,18 +2248,18 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
 
 <!-- ===== MOBILE NAV ===== -->
 <nav class="md:hidden fixed bottom-0 left-0 w-full bg-surface h-16 flex items-center justify-around z-50 border-t border-outline-variant/15 px-4">
-  <div class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='streams'?'text-primary':'text-on-surface-variant'" @click="currentPage='streams'">
+  <button class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='streams'?'text-primary':'text-on-surface-variant'" @click="currentPage='streams'" :aria-current="currentPage==='streams' ? 'page' : null" aria-label="Streams">
     <span class="material-symbols-outlined">sensors</span>
     <span class="text-[10px] font-bold uppercase tracking-tighter">Streams</span>
-  </div>
-  <div class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='storage'?'text-primary':'text-on-surface-variant'" @click="currentPage='storage'">
+  </button>
+  <button class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='storage'?'text-primary':'text-on-surface-variant'" @click="currentPage='storage'" :aria-current="currentPage==='storage' ? 'page' : null" aria-label="Storage">
     <span class="material-symbols-outlined">hard_drive</span>
     <span class="text-[10px] font-bold uppercase tracking-tighter">Storage</span>
-  </div>
-  <div class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='system'?'text-primary':'text-on-surface-variant'" @click="currentPage='system'; fetchSystem(); loadLogs()">
+  </button>
+  <button class="flex flex-col items-center gap-1 cursor-pointer" :class="currentPage==='system'?'text-primary':'text-on-surface-variant'" @click="currentPage='system'; fetchSystem(); loadLogs()" :aria-current="currentPage==='system' ? 'page' : null" aria-label="System">
     <span class="material-symbols-outlined">settings_input_component</span>
     <span class="text-[10px] font-bold uppercase tracking-tighter">System</span>
-  </div>
+  </button>
 </nav>
 
 <!-- ===== TOAST ===== -->
@@ -2340,6 +2340,28 @@ function app() {
       else if (this.fileSort === 'name') files.sort((a, b) => a.filename.localeCompare(b.filename));
       return files;
     },
+    get filteredStorageBreakdown() {
+      const search = this.storageSearch?.toLowerCase() || '';
+      return (this.storageBreakdown || []).filter(i => {
+        if (search && !i.username.toLowerCase().includes(search)) return false;
+        return true;
+      });
+    },
+    get recordingModels() {
+      return (this.models || []).filter(m => m.state === 'recording');
+    },
+    get hasCleanupSuggestions() {
+      return (this.storageBreakdown || []).some(i =>
+        (i.unmerged_count > 0 && i.merged_count > 0) ||
+        (i.oldest_file > 0 && (Date.now()/1000 - i.oldest_file) > 30*86400)
+      );
+    },
+    get cleanupFiltered() {
+      return (this.storageBreakdown || []).filter(i =>
+        (i.unmerged_count > 0 && i.merged_count > 0) ||
+        (i.oldest_file > 0 && (Date.now()/1000 - i.oldest_file) > 30*86400)
+      );
+    },
 
     init() {
       // 从 URL 提取 token（用于认证模式）
@@ -2362,6 +2384,8 @@ function app() {
         if (this.currentPage === 'storage' || this.currentPage === 'system') this.fetchDisk();
       }, 60000);
       if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+      // Re-render icons on page switch (MutationObserver now only watches direct children)
+      this.$watch('currentPage', () => setTimeout(() => _ri(), 50));
 
       // Global error handlers
       if (!this._errorHandlerBound) {
@@ -3699,7 +3723,7 @@ function app() {
         <div class="px-4 py-3 hover:bg-surface-container-high/50 transition-colors cursor-pointer flex items-center gap-3"
           @click="currentPage='storage'; storageExpandedUser=r.username; loadStorageFiles(r.username); searchQuery=''; searchResults=[]">
           <div class="flex-shrink-0 w-16 h-10 rounded overflow-hidden bg-surface-container-highest flex items-center justify-center">
-            <img x-show="r.thumbnail_url" :src="r.thumbnail_url" class="w-full h-full object-cover" loading="lazy"/>
+            <img x-show="r.thumbnail_url" :src="r.thumbnail_url" :alt="r.filename || 'thumbnail'" class="w-full h-full object-cover" loading="lazy"/>
             <span x-show="!r.thumbnail_url" class="material-symbols-outlined text-on-surface-variant text-sm">video_file</span>
           </div>
           <div class="flex-1 min-w-0">

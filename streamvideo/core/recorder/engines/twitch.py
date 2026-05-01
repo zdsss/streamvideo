@@ -34,9 +34,12 @@ class TwitchRecorder(BaseLiveRecorder):
 
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
         try:
+            cmd = ["streamlink", "--json", "--retry-open", "2"]
+            if self.proxy:
+                cmd += ["--http-proxy", self.proxy]
+            cmd.append(self._get_stream_url())
             proc = await asyncio.create_subprocess_exec(
-                "streamlink", "--json", "--retry-open", "2", self._get_stream_url(),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
             data = json.loads(stdout.decode())

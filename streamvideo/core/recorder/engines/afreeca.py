@@ -36,9 +36,10 @@ class AfreecaTVRecorder(BaseLiveRecorder):
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
         # Strategy 1: streamlink (native AfreecaTV support)
         try:
-            cmd = ["streamlink", "--json", "--retry-open", "2", self._get_stream_url()]
+            cmd = ["streamlink", "--json", "--retry-open", "2"]
             if self.proxy:
-                cmd = ["streamlink", "--json", "--http-proxy", self.proxy, "--retry-open", "2", self._get_stream_url()]
+                cmd += ["--http-proxy", self.proxy]
+            cmd.append(self._get_stream_url())
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
@@ -87,36 +88,3 @@ class AfreecaTVRecorder(BaseLiveRecorder):
         self._last_stop_reason = "process_exit_error"
         return False
 
-    async def _try_ytdlp_record(self, output_path: str) -> bool:
-        """yt-dlp 录制（AfreecaTV fallback）"""
-        try:
-            cmd = ["yt-dlp", "--no-part", "--hls-use-mpegts", "--no-overwrites",
-                   "-o", output_path, self._get_stream_url()]
-            if self.proxy:
-                cmd = ["yt-dlp", "--proxy", self.proxy] + cmd[1:]
-            self._active_proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            )
-            logger.info(f"[{self.info.username}] yt-dlp started (pid={self._active_proc.pid})")
-
-            while not self._stop_event.is_set() and self._recording_active:
-                await self._sleep(5)
-                if self._active_proc.returncode is not None:
-                    break
-                if os.path.exists(output_path) and self.info.current_recording:
-                    self.info.current_recording.file_size = os.path.getsize(output_path)
-                    self.info.current_recording.duration = time.time() - self.info.current_recording.start_time
-                    await self._notify()
-
-            if self._active_proc and self._active_proc.returncode is None:
-                self._active_proc.terminate()
-                try:
-                    await asyncio.wait_for(self._active_proc.wait(), timeout=10)
-                except asyncio.TimeoutError:
-                    self._active_proc.kill()
-            self._active_proc = None
-            return os.path.exists(output_path) and os.path.getsize(output_path) > 100_000
-        except Exception as e:
-            logger.warning(f"[{self.info.username}] yt-dlp error: {e}")
-            self._active_proc = None
-            return False

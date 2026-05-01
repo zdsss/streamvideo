@@ -22,7 +22,7 @@ from typing import Optional
 from streamvideo.core.recorder import ModelInfo, RecorderManager, RecordingSession, RecordingState
 from streamvideo.infrastructure.database.database import Database
 from streamvideo.infrastructure.messaging.task_queue import task_queue, Priority
-from streamvideo.shared.config import _detect_system_proxy
+from streamvideo.shared.config import ServerConfig, _detect_system_proxy
 
 
 def _safe_username(username: str) -> bool:
@@ -277,6 +277,16 @@ def save_config():
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+_background_tasks: list[asyncio.Task] = []
+
+
+def _safe_bg_task(coro):
+    task = asyncio.create_task(coro)
+    task.add_done_callback(lambda t: logger.error(f"Background task crashed: {t.exception()}") if not t.cancelled() and t.exception() else None)
+    _background_tasks.append(task)
+    return task
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await remux_stale_raw_files()
@@ -346,23 +356,24 @@ async def lifespan(app: FastAPI):
 
     # 启动时自动合并遗留片段
     if app_settings["auto_merge"]:
-        asyncio.create_task(startup_auto_merge())
+        _safe_bg_task(startup_auto_merge())
 
     # 录制保留策略定时任务
     if app_settings.get("retention_days", 0) > 0:
-        asyncio.create_task(_retention_cleanup_loop())
+        _safe_bg_task(_retention_cleanup_loop())
 
     # 过期 session 定期清理（每小时）
-    asyncio.create_task(_session_cleanup_loop())
+    _safe_bg_task(_session_cleanup_loop())
     # 磁盘空间定时检查（每 5 分钟）
-    asyncio.create_task(_disk_check_loop())
+    _safe_bg_task(_disk_check_loop())
     # 防熄屏守护（每 30 秒动态管理 caffeinate）
-    asyncio.create_task(_sleep_guard_loop())
+    _safe_bg_task(_sleep_guard_loop())
     # 启动任务队列
     task_queue.start()
 
     yield
 
+    task_queue.stop()
     try:
         await asyncio.wait_for(manager.stop_all(), timeout=30)
     except asyncio.TimeoutError:
@@ -718,7 +729,15 @@ async def websocket_endpoint(ws: WebSocket):
 
         # 保持连接
         while True:
-            data = await ws.receive_text()
+            try:
+                data = await asyncio.wait_for(ws.receive_text(), timeout=60)
+            except asyncio.TimeoutError:
+                # Send server-side ping to check connection
+                try:
+                    await ws.send_text('{"type":"ping"}')
+                    continue
+                except Exception:
+                    break
             # 客户端可以发送 ping
             if data == "ping":
                 await ws.send_text(json.dumps({"type": "pong"}))
@@ -792,4 +811,5 @@ if __name__ == "__main__":
         _start_caffeinate_proc()
         print("caffeinate: always-on mode, display sleep prevented")
 
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    srv = ServerConfig()
+    uvicorn.run(app, host=srv.host, port=srv.port, log_level="info")

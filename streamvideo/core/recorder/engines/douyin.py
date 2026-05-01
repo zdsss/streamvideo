@@ -425,6 +425,14 @@ class DouyinRecorder(BaseLiveRecorder):
                 await asyncio.wait_for(self._active_proc.wait(), timeout=10)
             except asyncio.TimeoutError:
                 self._active_proc.kill()
+        # 记录停止原因
+        if not self._last_stop_reason:
+            if self._stop_event.is_set():
+                self._last_stop_reason = "user_stop"
+            elif self._active_proc and self._active_proc.returncode == 0:
+                self._last_stop_reason = "process_exit_0"
+            elif self._active_proc and self._active_proc.returncode is not None:
+                self._last_stop_reason = "process_exit_error"
         self._active_proc = None
         return os.path.exists(output_path) and os.path.getsize(output_path) > 100_000
 

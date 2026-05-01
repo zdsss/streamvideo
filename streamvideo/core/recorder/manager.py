@@ -310,171 +310,171 @@ class RecorderManager:
                         sessions = [RecordingSession.from_dict(s) for s in json.load(f)]
                 except Exception as e:
                     logger.warning(f"[{username}] Failed to load sessions from JSON: {e}")
-            try:
-                for session in sessions:
-                    if session.status != "ended":
-                        continue
-                    # 重试次数限制
-                    if session.retry_count >= 3:
-                        logger.warning(f"[{username}] Session {session.session_id}: max retries reached, skipping")
-                        # P0: 合并失败超过重试次数时发送 webhook 警告
+        try:
+            for session in sessions:
+                if session.status != "ended":
+                    continue
+                # 重试次数限制
+                if session.retry_count >= 3:
+                    logger.warning(f"[{username}] Session {session.session_id}: max retries reached, skipping")
+                    # P0: 合并失败超过重试次数时发送 webhook 警告
+                    try:
+                        await self.webhook.notify("merge_failed", {
+                            "username": username,
+                            "session_id": session.session_id,
+                            "error": session.merge_error or "超过最大重试次数",
+                            "retry_count": session.retry_count,
+                            "segments": len(session.segments),
+                        })
+                    except Exception:
+                        logger.debug("suppressed exception", exc_info=True)
+                    if hasattr(self, '_merge_callback') and self._merge_callback:
                         try:
-                            await self.webhook.notify("merge_failed", {
-                                "username": username,
-                                "session_id": session.session_id,
-                                "error": session.merge_error or "超过最大重试次数",
-                                "retry_count": session.retry_count,
-                                "segments": len(session.segments),
-                            })
+                            await self._merge_callback(username, session.session_id,
+                                                       "merge_failed_permanent",
+                                                       error=session.merge_error or "超过最大重试次数",
+                                                       retry_count=session.retry_count)
                         except Exception:
                             logger.debug("suppressed exception", exc_info=True)
-                        if hasattr(self, '_merge_callback') and self._merge_callback:
-                            try:
-                                await self._merge_callback(username, session.session_id,
-                                                           "merge_failed_permanent",
-                                                           error=session.merge_error or "超过最大重试次数",
-                                                           retry_count=session.retry_count)
-                            except Exception:
-                                logger.debug("suppressed exception", exc_info=True)
-                        continue
-                    # 过滤：只保留存在且足够大的片段
-                    valid = []
-                    for fn in session.segments:
-                        fp = model_dir / fn
-                        if fp.exists() and fp.stat().st_size >= min_size:
-                            valid.append(fn)
-                        elif fp.exists() and fp.stat().st_size < min_size:
-                            logger.info(f"[{username}] Auto-cleanup small segment: {fn} ({fp.stat().st_size/1024:.0f} KB)")
-                            fp.unlink()
+                    continue
+                # 过滤：只保留存在且足够大的片段
+                valid = []
+                for fn in session.segments:
+                    fp = model_dir / fn
+                    if fp.exists() and fp.stat().st_size >= min_size:
+                        valid.append(fn)
+                    elif fp.exists() and fp.stat().st_size < min_size:
+                        logger.info(f"[{username}] Auto-cleanup small segment: {fn} ({fp.stat().st_size/1024:.0f} KB)")
+                        fp.unlink()
 
-                    if len(valid) == 0:
-                        session.status = "merged"
-                        session.merged_file = ""
-                        continue
+                if len(valid) == 0:
+                    session.status = "merged"
+                    session.merged_file = ""
+                    continue
 
-                    # 单片段：跳过合并，但执行后处理
-                    if len(valid) == 1:
-                        session.status = "merged"
-                        single_file = model_dir / valid[0]
-                        await self._post_process_fix_timestamps(single_file)
-                        await self._post_process_transcode(single_file, username, h265_override=pm_h265)
-                        final_name = self._generate_smart_name(username, valid, valid[0], template_override=pm_template)
-                        if final_name != valid[0]:
-                            final_path = model_dir / final_name
-                            if not final_path.exists():
-                                single_file.rename(final_path)
-                                session.merged_file = final_name
-                            else:
-                                session.merged_file = valid[0]
+                # 单片段：跳过合并，但执行后处理
+                if len(valid) == 1:
+                    session.status = "merged"
+                    single_file = model_dir / valid[0]
+                    await self._post_process_fix_timestamps(single_file)
+                    await self._post_process_transcode(single_file, username, h265_override=pm_h265)
+                    final_name = self._generate_smart_name(username, valid, valid[0], template_override=pm_template)
+                    if final_name != valid[0]:
+                        final_path = model_dir / final_name
+                        if not final_path.exists():
+                            single_file.rename(final_path)
+                            session.merged_file = final_name
                         else:
                             session.merged_file = valid[0]
-                        session_merged = True
-                        continue
-
-                    # ffprobe 校验编码一致性（自动跳过损坏片段）
-                    consistent, probe_valid, skipped, codec_error, codec_map = await self._check_codec_consistency(model_dir, valid)
-                    if skipped:
-                        logger.info(f"[{username}] Skipped {len(skipped)} corrupted segments: {skipped}")
-                        # 通知前端损坏片段
-                        if hasattr(self, '_merge_callback') and self._merge_callback:
-                            await self._merge_callback(username, "", "segment_warning",
-                                                       skipped_files=skipped, reason="corrupted")
-                    if len(probe_valid) < 2:
-                        if len(probe_valid) == 1:
-                            session.status = "merged"
-                            single_file = model_dir / probe_valid[0]
-                            await self._post_process_fix_timestamps(single_file)
-                            await self._post_process_transcode(single_file, username)
-                            session.merged_file = probe_valid[0]
-                        else:
-                            session.status = "merged"
-                            session.merged_file = ""
-                        continue
-
-                    # Codec 不一致时自动重编码
-                    if not consistent and len(probe_valid) >= 2:
-                        logger.info(f"[{username}] Session {session.session_id}: codec mismatch, attempting auto re-encode")
-                        try:
-                            probe_valid = await self._reencode_segments_to_dominant(
-                                model_dir, probe_valid, codec_map, username)
-                        except Exception as e:
-                            logger.warning(f"[{username}] Re-encode failed: {e}, skipping auto-merge")
-                            session.status = "error"
-                            session.merge_error = f"重编码失败: {e}"
-                            session.retry_count += 1
-                            continue
-                    valid = probe_valid
-
-                    # P0: 合并信心度评分
-                    merge_gap = getattr(self, '_merge_gap_minutes', 15)
-                    confidence, confidence_reasons = self._calc_merge_confidence(
-                        username, session, valid, consistent, gap_minutes=merge_gap)
-                    logger.info(f"[{username}] Session {session.session_id}: merge confidence={confidence:.2f} ({', '.join(confidence_reasons)})")
-
-                    if confidence < 0.4:
-                        logger.warning(f"[{username}] Session {session.session_id}: low confidence ({confidence:.2f}), skipping auto-merge")
-                        skip_reason = f"信心度过低({confidence*100:.0f}%)：{', '.join(confidence_reasons)}"
-                        session.merge_error = skip_reason
-                        if hasattr(self, '_merge_callback') and self._merge_callback:
-                            try:
-                                await self._merge_callback(username, session.session_id,
-                                                           "merge_low_confidence",
-                                                           confidence=confidence,
-                                                           reasons=confidence_reasons,
-                                                           skip_reason=skip_reason,
-                                                           files=valid)
-                            except Exception:
-                                logger.debug("suppressed exception", exc_info=True)
-                        continue
-                    elif confidence < 0.7:
-                        logger.info(f"[{username}] Session {session.session_id}: medium confidence ({confidence:.2f}), auto-merging (smart mode)")
-                        merge_type_label = "auto_smart"
                     else:
-                        merge_type_label = "auto_high"
-
-                    total = sum((model_dir / fn).stat().st_size for fn in valid)
-                    logger.info(f"[{username}] Session {session.session_id}: merging {len(valid)} segments ({total/1024/1024:.1f} MB)...")
-                    session.status = "merging"
-                    session.merge_started_at = time.time()
-                    session.original_segments = list(valid)
-                    # 持久化 merging 状态
-                    self._persist_sessions(username, sessions)
-
-                    try:
-                        rec_obj = self.recorders.get(username)
-                        should_delete = getattr(rec_obj, 'auto_delete_originals', False)
-                        merge_id = await self.merge_segments(username, valid, delete_originals=should_delete)
-                        merge_info = self._active_merges.get(merge_id, {})
-                        if merge_info.get("status") == "done":
-                            session.status = "merged"
-                            session.merged_file = merge_info.get("filename", "")
-                            session.merge_type = merge_type_label
-                            session.rollback_deadline = time.time() + 72 * 3600
-                            await self._notify_merge(username, session.session_id, "auto_merge_done",
-                                                     filename=session.merged_file,
-                                                     merge_type=merge_type_label,
-                                                     confidence=confidence,
-                                                     savings_bytes=merge_info.get("savings_bytes", 0),
-                                                     total_duration=int(ended_at - started_at) if (ended_at := session.ended_at or 0) and (started_at := session.started_at or 0) else 0)
-                        else:
-                            session.status = "error"
-                            session.merge_error = merge_info.get("error", "合并失败")
-                            session.retry_count += 1
-                    except Exception as e:
-                        session.status = "error"
-                        session.merge_error = str(e)
-                        session.retry_count += 1
-                        logger.error(f"[{username}] Session merge error: {e}")
+                        session.merged_file = valid[0]
                     session_merged = True
+                    continue
 
-                # 保存更新后的 session 状态
+                # ffprobe 校验编码一致性（自动跳过损坏片段）
+                consistent, probe_valid, skipped, codec_error, codec_map = await self._check_codec_consistency(model_dir, valid)
+                if skipped:
+                    logger.info(f"[{username}] Skipped {len(skipped)} corrupted segments: {skipped}")
+                    # 通知前端损坏片段
+                    if hasattr(self, '_merge_callback') and self._merge_callback:
+                        await self._merge_callback(username, "", "segment_warning",
+                                                   skipped_files=skipped, reason="corrupted")
+                if len(probe_valid) < 2:
+                    if len(probe_valid) == 1:
+                        session.status = "merged"
+                        single_file = model_dir / probe_valid[0]
+                        await self._post_process_fix_timestamps(single_file)
+                        await self._post_process_transcode(single_file, username)
+                        session.merged_file = probe_valid[0]
+                    else:
+                        session.status = "merged"
+                        session.merged_file = ""
+                    continue
+
+                # Codec 不一致时自动重编码
+                if not consistent and len(probe_valid) >= 2:
+                    logger.info(f"[{username}] Session {session.session_id}: codec mismatch, attempting auto re-encode")
+                    try:
+                        probe_valid = await self._reencode_segments_to_dominant(
+                            model_dir, probe_valid, codec_map, username)
+                    except Exception as e:
+                        logger.warning(f"[{username}] Re-encode failed: {e}, skipping auto-merge")
+                        session.status = "error"
+                        session.merge_error = f"重编码失败: {e}"
+                        session.retry_count += 1
+                        continue
+                valid = probe_valid
+
+                # P0: 合并信心度评分
+                merge_gap = getattr(self, '_merge_gap_minutes', 15)
+                confidence, confidence_reasons = self._calc_merge_confidence(
+                    username, session, valid, consistent, gap_minutes=merge_gap)
+                logger.info(f"[{username}] Session {session.session_id}: merge confidence={confidence:.2f} ({', '.join(confidence_reasons)})")
+
+                if confidence < 0.4:
+                    logger.warning(f"[{username}] Session {session.session_id}: low confidence ({confidence:.2f}), skipping auto-merge")
+                    skip_reason = f"信心度过低({confidence*100:.0f}%)：{', '.join(confidence_reasons)}"
+                    session.merge_error = skip_reason
+                    if hasattr(self, '_merge_callback') and self._merge_callback:
+                        try:
+                            await self._merge_callback(username, session.session_id,
+                                                       "merge_low_confidence",
+                                                       confidence=confidence,
+                                                       reasons=confidence_reasons,
+                                                       skip_reason=skip_reason,
+                                                       files=valid)
+                        except Exception:
+                            logger.debug("suppressed exception", exc_info=True)
+                    continue
+                elif confidence < 0.7:
+                    logger.info(f"[{username}] Session {session.session_id}: medium confidence ({confidence:.2f}), auto-merging (smart mode)")
+                    merge_type_label = "auto_smart"
+                else:
+                    merge_type_label = "auto_high"
+
+                total = sum((model_dir / fn).stat().st_size for fn in valid)
+                logger.info(f"[{username}] Session {session.session_id}: merging {len(valid)} segments ({total/1024/1024:.1f} MB)...")
+                session.status = "merging"
+                session.merge_started_at = time.time()
+                session.original_segments = list(valid)
+                # 持久化 merging 状态
                 self._persist_sessions(username, sessions)
-                # 同步到 recorder 的内存
-                rec = self.recorders.get(username)
-                if rec:
-                    rec._sessions = sessions
-            except Exception as e:
-                logger.error(f"[{username}] Session-based merge error: {e}")
+
+                try:
+                    rec_obj = self.recorders.get(username)
+                    should_delete = getattr(rec_obj, 'auto_delete_originals', False)
+                    merge_id = await self.merge_segments(username, valid, delete_originals=should_delete)
+                    merge_info = self._active_merges.get(merge_id, {})
+                    if merge_info.get("status") == "done":
+                        session.status = "merged"
+                        session.merged_file = merge_info.get("filename", "")
+                        session.merge_type = merge_type_label
+                        session.rollback_deadline = time.time() + 72 * 3600
+                        await self._notify_merge(username, session.session_id, "auto_merge_done",
+                                                 filename=session.merged_file,
+                                                 merge_type=merge_type_label,
+                                                 confidence=confidence,
+                                                 savings_bytes=merge_info.get("savings_bytes", 0),
+                                                 total_duration=int(ended_at - started_at) if (ended_at := session.ended_at or 0) and (started_at := session.started_at or 0) else 0)
+                    else:
+                        session.status = "error"
+                        session.merge_error = merge_info.get("error", "合并失败")
+                        session.retry_count += 1
+                except Exception as e:
+                    session.status = "error"
+                    session.merge_error = str(e)
+                    session.retry_count += 1
+                    logger.error(f"[{username}] Session merge error: {e}")
+                session_merged = True
+
+            # 保存更新后的 session 状态
+            self._persist_sessions(username, sessions)
+            # 同步到 recorder 的内存
+            rec = self.recorders.get(username)
+            if rec:
+                rec._sessions = sessions
+        except Exception as e:
+            logger.error(f"[{username}] Session-based merge error: {e}")
 
         # 2. Fallback: 文件名时间戳分组（兼容无 session 的历史文件）
         if not session_merged:
@@ -800,23 +800,28 @@ class RecorderManager:
             result_size = output_path.stat().st_size if output_path.exists() else result_size
 
             # 后处理：智能重命名
-            await _update_progress(0.96, "智能重命名...")
-            final_name = self._generate_smart_name(username, filenames, output_name)
-            if final_name != output_name:
-                final_path = model_dir / final_name
-                if not final_path.exists():
-                    output_path.rename(final_path)
-                    output_name = final_name
-                    output_path = final_path
-                    logger.info(f"[{username}] Renamed to: {final_name}")
+            try:
+                await _update_progress(0.96, "智能重命名...")
+                final_name = self._generate_smart_name(username, filenames, output_name)
+                if final_name != output_name:
+                    final_path = model_dir / final_name
+                    if not final_path.exists():
+                        output_path.rename(final_path)
+                        output_name = final_name
+                        output_path = final_path
+                        logger.info(f"[{username}] Renamed to: {final_name}")
 
-            # 后处理：云存储上传（可选）
-            if output_path.exists():
-                cloud_url = await self.cloud.upload(output_path, username)
+                # 后处理：云存储上传（可选）
+                if output_path.exists():
+                    cloud_url = await self.cloud.upload(output_path, username)
 
-            # 后处理：录后脚本（可选）
-            if output_path.exists():
-                await self._run_post_script(output_path, username, "merge_done")
+                # 后处理：录后脚本（可选）
+                if output_path.exists():
+                    await self._run_post_script(output_path, username, "merge_done")
+            except Exception as e:
+                self._active_merges[merge_id] = {"status": "error", "error": f"Post-merge pipeline failed: {e}"}
+                logger.error(f"[{username}] Post-merge pipeline failed: {e}")
+                raise
 
             # 后处理：FlashCut 全自动流水线（检测高光 + 生成片段）
             if getattr(self, '_highlight_auto_detect', False) and output_path.exists():
@@ -984,8 +989,14 @@ class RecorderManager:
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=3600)
             if proc.returncode == 0 and fixed_path.exists() and fixed_path.stat().st_size > 0:
-                file_path.unlink()
-                fixed_path.rename(file_path)
+                tmp_backup = file_path.with_suffix(".original.mp4")
+                file_path.rename(tmp_backup)
+                try:
+                    fixed_path.rename(file_path)
+                    tmp_backup.unlink()
+                except Exception:
+                    tmp_backup.rename(file_path)
+                    raise
                 logger.info(f"Post-process: timestamps fixed for {file_path.name}")
             else:
                 error_msg = stderr.decode()[:200] if stderr else "unknown"
@@ -1095,13 +1106,17 @@ class RecorderManager:
             if rc == 0 and h265_path.exists() and h265_path.stat().st_size > 0:
                 new_size = h265_path.stat().st_size
                 ratio = (1 - new_size / file_size) * 100 if file_size > 0 else 0
+                original_path = file_path.with_suffix(".original.mp4")
+                file_path.rename(original_path)
+                try:
+                    h265_path.rename(file_path)
+                except Exception:
+                    original_path.rename(file_path)
+                    raise
                 if getattr(self, "_preserve_original_on_transcode", False):
-                    original_path = file_path.with_suffix(".original.mp4")
-                    file_path.rename(original_path)
                     logger.info(f"[{username}] Original preserved: {original_path.name}")
                 else:
-                    file_path.unlink()
-                h265_path.rename(file_path)
+                    original_path.unlink()
                 logger.info(f"[{username}] Transcode done: {file_size/1024/1024:.0f}MB → {new_size/1024/1024:.0f}MB ({ratio:.0f}% smaller)")
                 # Webhook 通知
                 await self.webhook.notify("merge_done", {
