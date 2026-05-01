@@ -56,3 +56,8 @@ QUOTA_FREE_CLIPS_PER_DAY = 3
 QUOTA_PRO_CLIPS_PER_DAY = 50
 QUOTA_FREE_MAX_MODELS = 3
 QUOTA_PRO_MAX_MODELS = 20
+
+# 磁盘空间阈值 (bytes)
+DISK_CRITICAL_BYTES = 2 * 1024 * 1024 * 1024    # 2 GB — stop recording
+DISK_WARNING_BYTES = 20 * 1024 * 1024 * 1024     # 20 GB — warn
+DISK_RESUME_BYTES = 4 * 1024 * 1024 * 1024       # 4 GB — resume from critical

@@ -113,7 +113,6 @@ async def get_system():
     })
 
 
-@router.post("/api/settings")
 @router.get("/api/system/whisper")
 async def check_whisper():
     """检查 Whisper 是否可用"""
@@ -123,6 +122,18 @@ async def check_whisper():
         return JSONResponse({"available": available})
     except Exception:
         return JSONResponse({"available": False})
+
+
+@router.post("/api/settings")
+async def update_settings(req: dict):
+    """更新设置"""
+    allowed = set(DEFAULT_SETTINGS.keys())
+    for k, v in req.items():
+        if k in allowed:
+            app_settings[k] = v
+    apply_settings_to_recorders()
+    save_config()
+    return JSONResponse({"ok": True, **app_settings})
 
 @router.get("/api/config/export")
 async def export_config():

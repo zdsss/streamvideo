@@ -1,4 +1,5 @@
 """Database MediaMixin — media mixin"""
+import json
 from typing import Optional
 
 
@@ -19,8 +20,7 @@ class MediaMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_danmaku(self, session_id: str) -> Optional[dict]:
         conn = self._conn()
@@ -31,8 +31,7 @@ class MediaMixin:
                 d["keywords_found"] = json.loads(d["keywords_found"]) if d["keywords_found"] else {}
                 return d
             return None
-        finally:
-            conn.close()
+
 
     def get_danmaku_by_username(self, username: str, limit: int = 20) -> list[dict]:
         conn = self._conn()
@@ -46,8 +45,7 @@ class MediaMixin:
                 d["keywords_found"] = json.loads(d["keywords_found"]) if d["keywords_found"] else {}
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     # ========== Highlights ==========
 
@@ -66,8 +64,7 @@ class MediaMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_highlights(self, username: str, limit: int = 50) -> list[dict]:
         conn = self._conn()
@@ -81,8 +78,7 @@ class MediaMixin:
                 d["signals"] = json.loads(d["signals"]) if d["signals"] else []
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     def get_highlight(self, highlight_id: str) -> Optional[dict]:
         conn = self._conn()
@@ -93,8 +89,7 @@ class MediaMixin:
                 d["signals"] = json.loads(d["signals"]) if d["signals"] else []
                 return d
             return None
-        finally:
-            conn.close()
+
 
     def update_highlight_status(self, highlight_id: str, status: str):
         conn = self._conn()
@@ -104,8 +99,7 @@ class MediaMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def delete_highlight(self, highlight_id: str):
         conn = self._conn()
@@ -115,8 +109,7 @@ class MediaMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_all_highlights(self, limit: int = 100) -> list[dict]:
         conn = self._conn()
@@ -129,8 +122,7 @@ class MediaMixin:
                 d["signals"] = json.loads(d["signals"]) if d["signals"] else []
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     # ========== Clips ==========
 
@@ -148,8 +140,7 @@ class MediaMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_clips(self, username: str, limit: int = 50) -> list[dict]:
         conn = self._conn()
@@ -158,16 +149,14 @@ class MediaMixin:
                 "SELECT * FROM clips WHERE username = ? ORDER BY created_at DESC LIMIT ?",
                 (username, limit)).fetchall()
             return [dict(r) for r in rows]
-        finally:
-            conn.close()
+
 
     def get_clip(self, clip_id: str) -> Optional[dict]:
         conn = self._conn()
         try:
             row = conn.execute("SELECT * FROM clips WHERE clip_id = ?", (clip_id,)).fetchone()
             return dict(row) if row else None
-        finally:
-            conn.close()
+
 
     def update_clip_status(self, clip_id: str, status: str, **kwargs):
         conn = self._conn()
@@ -187,8 +176,7 @@ class MediaMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def delete_clip(self, clip_id: str):
         conn = self._conn()
@@ -198,8 +186,7 @@ class MediaMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_all_clips(self, limit: int = 100) -> list[dict]:
         conn = self._conn()
@@ -207,8 +194,7 @@ class MediaMixin:
             rows = conn.execute(
                 "SELECT * FROM clips ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
-        finally:
-            conn.close()
+
 
     def get_clip_stats(self, username: str = "") -> dict:
         conn = self._conn()
@@ -224,8 +210,7 @@ class MediaMixin:
                     FROM clips WHERE status = 'done'
                 """).fetchone()
             return dict(row) if row else {}
-        finally:
-            conn.close()
+
 
     # ========== Highlight Rules ==========
 
@@ -246,8 +231,7 @@ class MediaMixin:
                 d["enabled"] = bool(d["enabled"])
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     def upsert_highlight_rule(self, rule_id: Optional[int] = None, **kwargs):
         conn = self._conn()
@@ -282,8 +266,7 @@ class MediaMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def delete_highlight_rule(self, rule_id: int):
         conn = self._conn()
@@ -293,8 +276,7 @@ class MediaMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     # ========== Distribute Tasks ==========
 

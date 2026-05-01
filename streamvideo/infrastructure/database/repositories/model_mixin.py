@@ -16,8 +16,7 @@ class ModelMixin:
                 d["enabled"] = bool(d["enabled"])
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     def upsert_model(self, username: str, url: str, **kwargs):
         conn = self._conn()
@@ -45,8 +44,7 @@ class ModelMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def delete_model(self, username: str):
         """删除主播及其所有关联数据"""
@@ -63,8 +61,7 @@ class ModelMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def update_model(self, username: str, **kwargs):
         _ALLOWED_COLUMNS = {"quality", "platform", "display_name", "live_url", "url", "last_online", "total_recordings"}
@@ -89,8 +86,7 @@ class ModelMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     # ========== Sessions ==========
 

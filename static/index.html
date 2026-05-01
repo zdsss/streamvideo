@@ -2346,28 +2346,35 @@ function app() {
       this._token = new URLSearchParams(location.search).get('token') || '';
       this.checkAuth();
       this.connectWS(); this.fetchModels(); this.fetchSettings(); this.fetchDisk();
+      // Clear existing intervals on re-init
+      if (this._recTickInterval) clearInterval(this._recTickInterval);
+      if (this._thumbInterval) clearInterval(this._thumbInterval);
+      if (this._diskInterval) clearInterval(this._diskInterval);
       // Removed: WebSocket push handles model updates
       // 1 秒录制时长刷新 — only tick when recording
-      setInterval(() => {
+      this._recTickInterval = setInterval(() => {
         if (this.models.some(m => m.state === 'recording')) this._recTick = Date.now();
       }, 1000);
-      setInterval(() => {
+      this._thumbInterval = setInterval(() => {
         if (this.currentPage === 'streams') this.thumbTs = Date.now();
       }, 15000);
-      setInterval(() => {
+      this._diskInterval = setInterval(() => {
         if (this.currentPage === 'storage' || this.currentPage === 'system') this.fetchDisk();
       }, 60000);
       if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
 
       // Global error handlers
-      window.addEventListener('error', (e) => {
-        console.error('Global error:', e);
-        this.showToast('JS Error: ' + (e.message || 'Unknown error'), 'error');
-      });
-      window.addEventListener('unhandledrejection', (e) => {
-        console.error('Unhandled rejection:', e);
-        this.showToast('Promise Error: ' + (e.reason?.message || e.reason || 'Unknown'), 'error');
-      });
+      if (!this._errorHandlerBound) {
+        window.addEventListener('error', (e) => {
+          console.error('Global error:', e);
+          this.showToast('JS Error: ' + (e.message || 'Unknown error'), 'error');
+        });
+        window.addEventListener('unhandledrejection', (e) => {
+          console.error('Unhandled rejection:', e);
+          this.showToast('Promise Error: ' + (e.reason?.message || e.reason || 'Unknown'), 'error');
+        });
+        this._errorHandlerBound = true;
+      }
     },
 
     _apiFetch(url, opts = {}) {
@@ -3028,15 +3035,14 @@ function app() {
     async fetchHighlights() {
       const user = this.highlightFilterUser;
       if (!user) {
-        // 获取所有主播的高光
-        let all = [];
-        for (const m of this.models) {
-          try {
-            const r = await this._apiFetch(`/api/highlights/${m.username}`);
-            if (r.ok) { const d = await r.json(); all = all.concat(d); }
-          } catch(e) {}
-        }
-        this.highlightsList = all.sort((a,b) => (b.created_at||0) - (a.created_at||0));
+        try {
+          const r = await this._apiFetch('/api/highlights');
+          if (r.ok) {
+            const d = await r.json();
+            const all = d.flatMap(g => (g.highlights || []).map(h => ({...h, username: g.username})));
+            this.highlightsList = all.sort((a,b) => (b.created_at||0) - (a.created_at||0));
+          }
+        } catch(e) { this.highlightsList = []; }
       } else {
         try {
           const r = await this._apiFetch(`/api/highlights/${user}`);
@@ -3088,14 +3094,14 @@ function app() {
     async fetchClips() {
       const user = this.clipFilterUser;
       if (!user) {
-        let all = [];
-        for (const m of this.models) {
-          try {
-            const r = await this._apiFetch(`/api/clips/${m.username}`);
-            if (r.ok) { const d = await r.json(); all = all.concat(d); }
-          } catch(e) {}
-        }
-        this.clipsList = all.sort((a,b) => (b.created_at||0) - (a.created_at||0));
+        try {
+          const r = await this._apiFetch('/api/clips');
+          if (r.ok) {
+            const d = await r.json();
+            const all = d.flatMap(g => (g.clips || []).map(c => ({...c, username: g.username})));
+            this.clipsList = all.sort((a,b) => (b.created_at||0) - (a.created_at||0));
+          }
+        } catch(e) { this.clipsList = []; }
       } else {
         try {
           const r = await this._apiFetch(`/api/clips/${user}`);

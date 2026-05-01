@@ -1,4 +1,6 @@
 """Database UserMixin — user mixin"""
+import json
+import time
 from typing import Optional
 
 
@@ -20,8 +22,7 @@ class UserMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_user_by_id(self, user_id: str) -> Optional[dict]:
         """通过 user_id 获取用户信息"""
@@ -29,8 +30,7 @@ class UserMixin:
         try:
             row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
             return {k: row[k] for k in row.keys()} if row else None
-        finally:
-            conn.close()
+
 
     def get_user_by_stripe_subscription(self, subscription_id: str) -> Optional[dict]:
         """通过 Stripe subscription_id 查找用户"""
@@ -40,8 +40,7 @@ class UserMixin:
                 "SELECT * FROM users WHERE stripe_subscription_id=?", (subscription_id,)
             ).fetchone()
             return {k: row[k] for k in row.keys()} if row else None
-        finally:
-            conn.close()
+
 
     def get_user_by_stripe_customer(self, customer_id: str) -> Optional[dict]:
         """通过 Stripe customer_id 查找用户"""
@@ -51,8 +50,7 @@ class UserMixin:
                 "SELECT * FROM users WHERE stripe_customer_id=?", (customer_id,)
             ).fetchone()
             return {k: row[k] for k in row.keys()} if row else None
-        finally:
-            conn.close()
+
 
     def get_user_tier_info(self, user_id: str) -> Optional[dict]:
         """获取用户套餐信息（user_tiers.username 存储 user_id）"""
@@ -60,12 +58,10 @@ class UserMixin:
         try:
             row = conn.execute("SELECT * FROM user_tiers WHERE username=?", (user_id,)).fetchone()
             return {k: row[k] for k in row.keys()} if row else None
-        finally:
-            conn.close()
+
 
     def set_user_tier(self, user_id: str, tier: str):
         """设置用户套餐"""
-        import time as _time
         conn = self._conn()
         try:
             conn.execute("""
@@ -76,8 +72,7 @@ class UserMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     # ========== Merge Queue ==========
 
@@ -99,8 +94,7 @@ class UserMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_merge_queue(self, status: str = "pending") -> list[dict]:
         conn = self._conn()
@@ -116,8 +110,7 @@ class UserMixin:
                 d["reasons"] = json.loads(d["reasons"]) if d["reasons"] else []
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     def update_merge_queue_status(self, session_id: str, status: str):
         conn = self._conn()
@@ -130,8 +123,7 @@ class UserMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def count_merge_queue(self) -> int:
         conn = self._conn()
@@ -139,8 +131,7 @@ class UserMixin:
             return conn.execute(
                 "SELECT COUNT(*) FROM merge_queue WHERE status='pending'"
             ).fetchone()[0]
-        finally:
-            conn.close()
+
 
     def cleanup_expired_merge_queue(self, days: int = 7) -> int:
         cutoff = time.time() - days * 86400
@@ -152,8 +143,7 @@ class UserMixin:
             )
             conn.commit()
             return cur.rowcount
-        finally:
-            conn.close()
+
 
     # ========== Translation Cache ==========
 
@@ -174,8 +164,7 @@ class UserMixin:
                 conn.commit()
                 return row["translated"]
             return None
-        finally:
-            conn.close()
+
 
     def set_translation_cache(self, text: str, source_lang: str, target_lang: str, translated: str, model: str = ""):
         import hashlib
@@ -187,5 +176,4 @@ class UserMixin:
                 (h, source_lang, target_lang, translated, model)
             )
             conn.commit()
-        finally:
-            conn.close()
+

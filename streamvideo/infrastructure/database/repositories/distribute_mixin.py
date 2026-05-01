@@ -1,8 +1,10 @@
 """Database DistributeMixin — distribute mixin"""
+import json
+import logging
 from typing import Optional
-
-
 from pathlib import Path
+
+logger = logging.getLogger("database")
 class DistributeMixin:
     def upsert_distribute_task(self, task: dict):
         conn = self._conn()
@@ -28,8 +30,7 @@ class DistributeMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_distribute_tasks(self, username: str = "", platform: str = "", limit: int = 50) -> list[dict]:
         conn = self._conn()
@@ -55,8 +56,7 @@ class DistributeMixin:
                     d["tags"] = []
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     def get_distribute_task(self, task_id: str) -> Optional[dict]:
         conn = self._conn()
@@ -71,8 +71,7 @@ class DistributeMixin:
             except Exception:
                 d["tags"] = []
             return d
-        finally:
-            conn.close()
+
 
     # ========== Migration ==========
 
@@ -153,8 +152,7 @@ class DistributeMixin:
             logger.info("Migration complete")
         except Exception as e:
             logger.error(f"Migration failed: {e}")
-        finally:
-            conn.close()
+
 
     # ========== Platform Credentials ==========
 
@@ -182,8 +180,7 @@ class DistributeMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_credential(self, user_id: str, platform: str) -> Optional[dict]:
         """获取指定用户的平台凭据，不存在返回 None"""
@@ -194,8 +191,7 @@ class DistributeMixin:
                 (user_id, platform)
             ).fetchone()
             return {k: row[k] for k in row.keys()} if row else None
-        finally:
-            conn.close()
+
 
     def delete_credential(self, user_id: str, platform: str):
         """删除平台凭据"""
@@ -209,6 +205,5 @@ class DistributeMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 

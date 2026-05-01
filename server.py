@@ -137,7 +137,8 @@ async def broadcast(data: dict):
     for ws in list(ws_clients):
         try:
             await ws.send_text(msg)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"WS broadcast failed for client: {e}")
             dead.add(ws)
     ws_clients.difference_update(dead)
 
@@ -517,8 +518,9 @@ async def _do_retention_cleanup(days: int):
             if ".raw." in f.name:
                 continue
             try:
-                if f.stat().st_mtime < cutoff:
-                    size = f.stat().st_size
+                st = f.stat()
+                if st.st_mtime < cutoff:
+                    size = st.st_size
                     f.unlink()
                     cleaned += 1
                     cleaned_size += size

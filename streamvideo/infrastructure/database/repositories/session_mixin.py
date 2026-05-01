@@ -1,4 +1,5 @@
 """Database SessionMixin — session mixin"""
+import json
 from typing import Optional
 
 
@@ -22,8 +23,7 @@ class SessionMixin:
                 d["original_segments"] = json.loads(raw_orig) if raw_orig else []
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     def get_sessions_by_id(self, session_id: str) -> list[dict]:
         conn = self._conn()
@@ -41,8 +41,7 @@ class SessionMixin:
                 d["original_segments"] = json.loads(raw_orig) if raw_orig else []
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     def upsert_session(self, session: dict):
         conn = self._conn()
@@ -82,8 +81,7 @@ class SessionMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def update_session_status(self, session_id: str, status: str, **kwargs):
         conn = self._conn()
@@ -103,16 +101,14 @@ class SessionMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_all_sessions_by_status(self, status: str) -> list[dict]:
         conn = self._conn()
         try:
             rows = conn.execute("SELECT * FROM sessions WHERE status = ?", (status,)).fetchall()
             return [dict(r) | {"segments": json.loads(r["segments"])} for r in rows]
-        finally:
-            conn.close()
+
 
     # ========== Merge History ==========
 
@@ -134,8 +130,7 @@ class SessionMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def get_merge_history(self, username: str, limit: int = 50) -> list[dict]:
         conn = self._conn()
@@ -150,8 +145,7 @@ class SessionMixin:
                 d["input_files"] = json.loads(d["input_files"]) if d["input_files"] else []
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     def get_all_merge_history(self, limit: int = 100) -> list[dict]:
         """获取全局合并历史（不限主播）"""
@@ -167,8 +161,7 @@ class SessionMixin:
                 d["input_files"] = json.loads(d["input_files"]) if d["input_files"] else []
                 result.append(d)
             return result
-        finally:
-            conn.close()
+
 
     # ========== Daily Stats ==========
 
@@ -185,8 +178,7 @@ class SessionMixin:
                 GROUP BY day ORDER BY day
             """, (days,)).fetchall()
             return [dict(r) for r in rows]
-        finally:
-            conn.close()
+
 
     # ========== Stats ==========
 
@@ -208,8 +200,7 @@ class SessionMixin:
                     FROM sessions WHERE ended_at > 0
                 """).fetchone()
             return dict(row) if row else {}
-        finally:
-            conn.close()
+
 
     # ========== Danmaku ==========
 

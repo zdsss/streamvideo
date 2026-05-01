@@ -1,32 +1,50 @@
 """认证路由 - 用户注册、登录、注销"""
 import time
-from collections import defaultdict
+from collections import OrderedDict
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-_login_attempts: dict[str, list[float]] = defaultdict(list)
 _MAX_ATTEMPTS = 5
 _WINDOW_SECONDS = 60
 
 
-def _check_rate_limit(ip: str) -> bool:
-    """Returns True if rate limit exceeded"""
-    now = time.time()
-    attempts = _login_attempts[ip]
-    # Clean old entries
-    _login_attempts[ip] = [t for t in attempts if now - t < _WINDOW_SECONDS]
-    if len(_login_attempts[ip]) >= _MAX_ATTEMPTS:
-        return True
-    _login_attempts[ip].append(now)
-    return False
+class _BoundedRateLimiter:
+    def __init__(self, max_entries: int = 1000):
+        self._store: OrderedDict[str, list[float]] = OrderedDict()
+        self._max = max_entries
+
+    def _get_ip(self, request: Request) -> str:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
+
+    def check(self, request: Request, max_attempts: int = _MAX_ATTEMPTS, window: int = _WINDOW_SECONDS) -> bool:
+        ip = self._get_ip(request)
+        while len(self._store) >= self._max:
+            self._store.popitem(last=False)
+        now = time.time()
+        attempts = [t for t in self._store.get(ip, []) if now - t < window]
+        if len(attempts) >= max_attempts:
+            return True
+        attempts.append(now)
+        self._store[ip] = attempts
+        self._store.move_to_end(ip)
+        return False
+
+
+_rate_limiter = _BoundedRateLimiter()
 
 
 @router.post("/register")
-async def auth_register(req: dict):
+async def auth_register(req: dict, request: Request):
     """用户注册"""
+    if _rate_limiter.check(request):
+        return JSONResponse({"error": "请求过于频繁，请稍后再试", "retry_after": 60}, status_code=429)
+
     from streamvideo.core.auth.manager import AuthManager
     from server import db
 
@@ -47,8 +65,7 @@ async def auth_register(req: dict):
 async def auth_login(req: dict, request: Request):
     """用户登录"""
     # Rate limiting
-    client_ip = request.client.host if request.client else "unknown"
-    if _check_rate_limit(client_ip):
+    if _rate_limiter.check(request):
         return JSONResponse({"error": "登录尝试过于频繁，请稍后再试", "retry_after": 60}, status_code=429)
 
     from streamvideo.core.auth.manager import AuthManager

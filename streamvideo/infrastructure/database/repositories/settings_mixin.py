@@ -1,4 +1,5 @@
 """Database SettingsMixin — settings mixin"""
+import json
 from typing import Optional
 
 
@@ -14,8 +15,7 @@ class SettingsMixin:
                 except (json.JSONDecodeError, TypeError):
                     result[r["key"]] = r["value"]
             return result
-        finally:
-            conn.close()
+
 
     def set_setting(self, key: str, value):
         conn = self._conn()
@@ -28,8 +28,7 @@ class SettingsMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     def set_settings(self, settings: dict):
         conn = self._conn()
@@ -43,8 +42,7 @@ class SettingsMixin:
         except Exception:
             conn.rollback()
             raise
-        finally:
-            conn.close()
+
 
     # ========== Models ==========
 

@@ -898,7 +898,7 @@ class RecorderManager:
             logger.warning(f"[{username}] Merge notification failed: {e}")
 
         # 60 秒后清理 _active_merges 条目，防止内存泄漏
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         _mid = merge_id
         loop.call_later(60, lambda: self._active_merges.pop(_mid, None))
 
@@ -982,7 +982,7 @@ class RecorderManager:
                 "-c", "copy", "-movflags", "+faststart", str(fixed_path),
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await proc.communicate()
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=3600)
             if proc.returncode == 0 and fixed_path.exists() and fixed_path.stat().st_size > 0:
                 file_path.unlink()
                 fixed_path.rename(file_path)

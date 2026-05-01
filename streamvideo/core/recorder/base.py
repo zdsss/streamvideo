@@ -25,6 +25,7 @@ def _safe_task(coro):
     return task
 
 from streamvideo.core.recorder.models import *
+from streamvideo.shared.constants import DISK_CRITICAL_BYTES, DISK_WARNING_BYTES, DISK_RESUME_BYTES
 
 class BaseLiveRecorder:
     """通用直播录制器基类"""
@@ -260,24 +261,25 @@ class BaseLiveRecorder:
         logger.info(f"[{self.info.username}] New session: {session.session_id}")
         return session
 
-    def _end_session(self):
-        """结束当前会话（调用方应持有 _session_lock 或在单协程上下文中）"""
-        if not self._current_session:
-            return
-        self._current_session.ended_at = time.time()
-        self._current_session.status = "ended"
-        self._current_session.stream_end_reason = self._last_stop_reason or "unknown"
-        self._save_sessions()
-        seg_count = len(self._current_session.segments)
-        logger.info(f"[{self.info.username}] Session ended: {self._current_session.session_id} "
-                     f"({seg_count} segments, reason={self._last_stop_reason})")
-        # Webhook: 录制结束
-        if self._manager and self._manager.webhook:
-            _safe_task(self._manager.webhook.notify("recording_end", {
-                "username": self.info.username, "segments": seg_count,
-                "reason": self._last_stop_reason}))
-        self._current_session = None
-        self._last_stop_reason = ""
+    async def _end_session(self):
+        """结束当前会话（持有 _session_lock 保护并发访问）"""
+        async with self._session_lock:
+            if not self._current_session:
+                return
+            self._current_session.ended_at = time.time()
+            self._current_session.status = "ended"
+            self._current_session.stream_end_reason = self._last_stop_reason or "unknown"
+            self._save_sessions()
+            seg_count = len(self._current_session.segments)
+            logger.info(f"[{self.info.username}] Session ended: {self._current_session.session_id} "
+                         f"({seg_count} segments, reason={self._last_stop_reason})")
+            # Webhook: 录制结束
+            if self._manager and self._manager.webhook:
+                _safe_task(self._manager.webhook.notify("recording_end", {
+                    "username": self.info.username, "segments": seg_count,
+                    "reason": self._last_stop_reason}))
+            self._current_session = None
+            self._last_stop_reason = ""
 
     async def check_status(self) -> tuple[ModelStatus, Optional[int], int]:
         """子类实现：检测在线状态，返回 (status, model_id, viewers)"""
@@ -297,7 +299,7 @@ class BaseLiveRecorder:
         """录制中磁盘检查。返回: 'ok' | 'warning' | 'critical'"""
         try:
             free = shutil.disk_usage(str(self.output_dir)).free
-            if free < 500 * 1024 * 1024:
+            if free < DISK_CRITICAL_BYTES:
                 logger.warning(f"[{self.info.username}] Disk critically low ({free/1024/1024:.0f}MB)")
                 self._disk_critical = True
                 if self._manager and self._manager.webhook:
@@ -307,7 +309,7 @@ class BaseLiveRecorder:
                     _safe_task(self._manager._disk_warning_callback(
                         self.info.username, int(free/1024/1024), True))
                 return "critical"
-            elif free < 10 * 1024 * 1024 * 1024:
+            elif free < DISK_WARNING_BYTES:
                 logger.warning(f"[{self.info.username}] Disk space low: {free/1024/1024:.0f}MB remaining")
                 if self._manager and self._manager.webhook:
                     _safe_task(self._manager.webhook.notify("disk_low", {
@@ -371,7 +373,7 @@ class BaseLiveRecorder:
                 pass
         # 结束当前会话
         if self._current_session:
-            self._end_session()
+            await self._end_session()
         await self._close_http_session()
         self._set_state(RecordingState.IDLE)
         logger.info(f"[{self.info.username}] Monitor stopped")
@@ -404,7 +406,7 @@ class BaseLiveRecorder:
                     if self._disk_critical:
                         try:
                             free = shutil.disk_usage(str(self.output_dir)).free
-                            if free > 1024 * 1024 * 1024:  # > 1GB 恢复
+                            if free > DISK_RESUME_BYTES:  # > 4GB 恢复
                                 self._disk_critical = False
                                 logger.info(f"[{self.info.username}] Disk space recovered ({free/1024/1024:.0f}MB), resuming")
                             else:
@@ -520,13 +522,15 @@ class BaseLiveRecorder:
                             rec_info.file_size = file_size
                             rec_info.duration = time.time() - rec_info.start_time
                             self.info.recordings.append(rec_info)
+                            if len(self.info.recordings) > 200:
+                                self.info.recordings = self.info.recordings[-200:]
                             logger.info(f"[{self.info.username}] Saved: {mp4_path} ({file_size/1024/1024:.1f} MB)")
                             self._save_meta()
 
                         # 磁盘空间预警
                         try:
                             free = shutil.disk_usage(str(self.output_dir)).free
-                            if free < 1024 * 1024 * 1024:  # < 1GB
+                            if free < DISK_RESUME_BYTES:  # < 4GB
                                 logger.warning(f"[{self.info.username}] Low disk space: {free/1024/1024:.0f}MB remaining")
                                 if self._manager and self._manager.webhook:
                                     _safe_task(self._manager.webhook.notify("disk_low", {
@@ -604,7 +608,7 @@ class BaseLiveRecorder:
             elapsed = time.time() - grace_start
             if elapsed >= effective_grace:
                 logger.info(f"[{self.info.username}] Grace period ended ({stop_reason}, {effective_grace:.0f}s), confirmed offline")
-                self._end_session()
+                await self._end_session()
                 await self._try_auto_merge()
                 self._set_state(RecordingState.MONITORING)
                 return
@@ -622,7 +626,7 @@ class BaseLiveRecorder:
                 return  # 会话保持 active，继续录制
 
         # 被 stop() 中断
-        self._end_session()
+        await self._end_session()
         await self._try_auto_merge()
         self._set_state(RecordingState.IDLE)
 
