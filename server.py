@@ -705,9 +705,12 @@ init_payment_router(db)
 init_tasks_router(task_queue)
 
 # 同时注册已有的 auth/streams/storage 路由
-from streamvideo.api.routes.auth import router as auth_router
-from streamvideo.api.routes.streams import router as streams_router
+from streamvideo.api.routes.auth import router as auth_router, init_auth_router
+from streamvideo.api.routes.streams import router as streams_router, init_streams_router
 from streamvideo.api.routes.storage import router as storage_router
+
+init_auth_router(db)
+init_streams_router(db, manager, broadcast, apply_settings_to_recorders, save_config)
 
 for _router in [auth_router, streams_router, storage_router, highlights_router,
                 clips_router, system_router, distribute_router, payment_router, tasks_router]:

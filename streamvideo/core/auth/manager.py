@@ -5,6 +5,7 @@
 
 import bcrypt
 import hashlib
+import hmac
 import logging
 import secrets
 import time
@@ -28,7 +29,7 @@ def _verify_password(password: str, stored_hash: str) -> bool:
         parts = stored_hash.split(":", 1)
         salt = parts[0]
         h = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
-        return f"{salt}:{h}" == stored_hash
+        return hmac.compare_digest(f"{salt}:{h}", stored_hash)
 
     # 新格式 bcrypt 验证
     try:

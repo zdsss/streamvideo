@@ -5,10 +5,21 @@ from collections import OrderedDict
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from streamvideo.core.auth.manager import AuthManager
+from streamvideo.core.auth.quota import QuotaManager
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _MAX_ATTEMPTS = 5
 _WINDOW_SECONDS = 60
+
+# Module-level dependencies (injected by server.py)
+db = None
+
+
+def init_auth_router(database):
+    global db
+    db = database
 
 
 class _BoundedRateLimiter:
@@ -17,10 +28,12 @@ class _BoundedRateLimiter:
         self._max = max_entries
 
     def _get_ip(self, request: Request) -> str:
+        if request.client and request.client.host:
+            return request.client.host
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
             return forwarded.split(",")[0].strip()
-        return request.client.host if request.client else "unknown"
+        return "unknown"
 
     def check(self, request: Request, max_attempts: int = _MAX_ATTEMPTS, window: int = _WINDOW_SECONDS) -> bool:
         ip = self._get_ip(request)
@@ -45,9 +58,6 @@ async def auth_register(req: dict, request: Request):
     if _rate_limiter.check(request):
         return JSONResponse({"error": "请求过于频繁，请稍后再试", "retry_after": 60}, status_code=429)
 
-    from streamvideo.core.auth.manager import AuthManager
-    from server import db
-
     am = AuthManager(db)
     try:
         user = am.register(
@@ -55,7 +65,7 @@ async def auth_register(req: dict, request: Request):
             password=req.get("password", ""),
             display_name=req.get("display_name", "")
         )
-        result = am.login(req["email"], req["password"])
+        result = am.login(req.get("email", ""), req.get("password", ""))
         return JSONResponse({"ok": True, **result})
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -67,9 +77,6 @@ async def auth_login(req: dict, request: Request):
     # Rate limiting
     if _rate_limiter.check(request):
         return JSONResponse({"error": "登录尝试过于频繁，请稍后再试", "retry_after": 60}, status_code=429)
-
-    from streamvideo.core.auth.manager import AuthManager
-    from server import db
 
     am = AuthManager(db)
     try:
@@ -85,44 +92,45 @@ async def auth_login(req: dict, request: Request):
 @router.post("/logout")
 async def auth_logout(req: dict):
     """用户注销"""
-    from streamvideo.core.auth.manager import AuthManager
-    from server import db
-
-    am = AuthManager(db)
-    token = req.get("session_token", "")
-    am.logout(token)
-    return JSONResponse({"ok": True})
+    try:
+        am = AuthManager(db)
+        token = req.get("session_token", "")
+        am.logout(token)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.get("/me")
 async def auth_me(request: Request):
     """获取当前用户信息"""
-    from streamvideo.core.auth.manager import AuthManager
-    from streamvideo.core.auth.quota import QuotaManager
-    from server import db
+    try:
+        am = AuthManager(db)
+        # Prefer Authorization header, fallback to query param
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        else:
+            token = request.query_params.get("session_token") or request.headers.get("X-Session-Token", "")
+        user = am.validate_session(token)
+        if not user:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
 
-    am = AuthManager(db)
-    # Prefer Authorization header, fallback to query param
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-    else:
-        token = request.query_params.get("session_token") or request.headers.get("X-Session-Token", "")
-    user = am.validate_session(token)
-    if not user:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-
-    tier_info = QuotaManager(db).get_tier_info(user["user_id"])
-    user["tier"] = tier_info["tier"]
-    user["tier_name"] = tier_info["tier_name"]
-    return JSONResponse({"ok": True, "user": user})
+        tier_info = QuotaManager(db).get_tier_info(user["user_id"])
+        user["tier"] = tier_info["tier"]
+        user["tier_name"] = tier_info["tier_name"]
+        return JSONResponse({"ok": True, "user": user})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.get("/users")
-async def auth_users():
+async def auth_users(request: Request):
     """获取所有用户（管理员）"""
-    from streamvideo.core.auth.manager import AuthManager
-    from server import db
-
     am = AuthManager(db)
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else request.query_params.get("session_token", "")
+    user = am.validate_session(token)
+    if not user or user.get("role") != "admin":
+        return JSONResponse({"error": "forbidden"}, status_code=403)
     return JSONResponse(am.get_users())

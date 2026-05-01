@@ -5,8 +5,26 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from streamvideo.core.recorder.models import detect_platform
+
 router = APIRouter(prefix="/api", tags=["streams"])
 logger = logging.getLogger("server")
+
+# Module-level dependencies (injected by server.py)
+db = None
+manager = None
+broadcast = None
+apply_settings_to_recorders = None
+save_config = None
+
+
+def init_streams_router(database, recorder_manager, ws_broadcast, apply_fn, save_fn):
+    global db, manager, broadcast, apply_settings_to_recorders, save_config
+    db = database
+    manager = recorder_manager
+    broadcast = ws_broadcast
+    apply_settings_to_recorders = apply_fn
+    save_config = save_fn
 
 _MODEL_SETTINGS_FIELDS = {
     "quality", "auto_merge", "h265_transcode", "filename_template",
@@ -20,13 +38,11 @@ class AddModelRequest(BaseModel):
 
 @router.get("/models")
 async def get_models():
-    from server import manager
     return JSONResponse(manager.get_all_info())
 
 
 @router.post("/models")
 async def add_model(req: AddModelRequest):
-    from server import manager, db, broadcast, apply_settings_to_recorders, save_config
     from streamvideo.core.auth.quota import QuotaManager
 
     qm = QuotaManager(db)
@@ -40,7 +56,6 @@ async def add_model(req: AddModelRequest):
             status_code=429,
         )
     # Duplicate detection
-    from streamvideo.core.recorder.models import detect_platform
     try:
         platform, identifier, display_name = detect_platform(req.url)
     except Exception:
@@ -64,8 +79,6 @@ async def add_model(req: AddModelRequest):
 
 @router.delete("/models/{username}")
 async def remove_model(username: str):
-    from server import manager, db, broadcast, save_config
-
     await manager.stop_model(username)
     manager.remove_model(username)
     try:
@@ -79,36 +92,46 @@ async def remove_model(username: str):
 
 @router.post("/models/{username}/start")
 async def start_model(username: str):
-    from server import manager
-    await manager.start_model(username)
-    return JSONResponse({"ok": True})
+    try:
+        await manager.start_model(username)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.warning(f"start_model failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.post("/models/{username}/stop")
 async def stop_model(username: str):
-    from server import manager
-    await manager.stop_model(username)
-    return JSONResponse({"ok": True})
+    try:
+        await manager.stop_model(username)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.warning(f"stop_model failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.post("/start-all")
 async def start_all():
-    from server import manager
-    await manager.start_all()
-    return JSONResponse({"ok": True})
+    try:
+        await manager.start_all()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.warning(f"start_all failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.post("/stop-all")
 async def stop_all():
-    from server import manager
-    await manager.stop_all()
-    return JSONResponse({"ok": True})
+    try:
+        await manager.stop_all()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.warning(f"stop_all failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.post("/models/{username}/auto-merge")
 async def toggle_model_auto_merge(username: str, req: dict):
-    from server import manager, broadcast
-
     rec = manager.recorders.get(username)
     if not rec:
         return JSONResponse({"error": "主播不存在"}, status_code=404)
@@ -121,8 +144,6 @@ async def toggle_model_auto_merge(username: str, req: dict):
 
 @router.get("/models/{username}/settings")
 async def get_model_settings(username: str):
-    from server import manager
-
     rec = manager.recorders.get(username)
     if not rec:
         return JSONResponse({"error": "主播不存在"}, status_code=404)
@@ -141,8 +162,6 @@ async def get_model_settings(username: str):
 
 @router.put("/models/{username}/settings")
 async def update_model_settings(username: str, req: dict):
-    from server import manager, save_config, broadcast
-
     rec = manager.recorders.get(username)
     if not rec:
         return JSONResponse({"error": "主播不存在"}, status_code=404)
@@ -183,8 +202,6 @@ async def update_model_settings(username: str, req: dict):
 
 @router.post("/models/{username}/schedule")
 async def set_model_schedule(username: str, req: dict):
-    from server import manager, save_config
-
     rec = manager.recorders.get(username)
     if not rec:
         return JSONResponse({"error": "主播不存在"}, status_code=404)
@@ -218,8 +235,6 @@ async def set_model_schedule(username: str, req: dict):
 
 @router.get("/models/{username}/schedule")
 async def get_model_schedule(username: str):
-    from server import manager
-
     rec = manager.recorders.get(username)
     if not rec:
         return JSONResponse({"error": "主播不存在"}, status_code=404)
@@ -228,8 +243,6 @@ async def get_model_schedule(username: str):
 
 @router.post("/models/{username}/quality")
 async def set_model_quality(username: str, req: dict):
-    from server import manager, save_config, broadcast
-
     rec = manager.recorders.get(username)
     if not rec:
         return JSONResponse({"error": "主播不存在"}, status_code=404)
@@ -246,22 +259,28 @@ async def set_model_quality(username: str, req: dict):
 
 @router.post("/models/{username}/cookies")
 async def set_model_cookies(username: str, req: dict):
-    from server import manager
-
-    rec = manager.recorders.get(username)
-    if not rec:
-        return JSONResponse({"error": "主播不存在"}, status_code=404)
-    rec.custom_cookies = req.get("cookies", "")
-    return JSONResponse({"ok": True})
+    try:
+        rec = manager.recorders.get(username)
+        if not rec:
+            return JSONResponse({"error": "主播不存在"}, status_code=404)
+        rec.custom_cookies = req.get("cookies", "")
+        save_config()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.warning(f"set_model_cookies failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.post("/models/{username}/stream-url")
 async def set_model_stream_url(username: str, req: dict):
-    from server import manager
-
-    rec = manager.recorders.get(username)
-    if not rec:
-        return JSONResponse({"error": "主播不存在"}, status_code=404)
-    rec.custom_stream_url = req.get("stream_url", "")
-    logger.info(f"[{username}] Custom stream URL set: {rec.custom_stream_url[:80] if rec.custom_stream_url else 'cleared'}")
-    return JSONResponse({"ok": True})
+    try:
+        rec = manager.recorders.get(username)
+        if not rec:
+            return JSONResponse({"error": "主播不存在"}, status_code=404)
+        rec.custom_stream_url = req.get("stream_url", "")
+        logger.info(f"[{username}] Custom stream URL set: {rec.custom_stream_url[:80] if rec.custom_stream_url else 'cleared'}")
+        save_config()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.warning(f"set_model_stream_url failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)

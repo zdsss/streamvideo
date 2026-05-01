@@ -2410,9 +2410,9 @@ function app() {
       return fetch(url, { ...opts, headers });
     },
 
-    async fetchSettings() { try { const r = await this._apiFetch('/api/settings'); if (r.ok) { const s = await r.json(); this.settings = { ...this.settings, ...s }; } } catch(e) {} },
-    async fetchDisk() { try { const r = await this._apiFetch('/api/disk'); if (r.ok) this.diskInfo = await r.json(); } catch(e) {} },
-    async fetchModels() { try { const r = await this._apiFetch('/api/models'); if (r.ok) { const d = await r.json(); if (!this.models.length) this.models = d; } } catch(e) {} },
+    async fetchSettings() { try { const r = await this._apiFetch('/api/settings'); if (r.ok) { const s = await r.json(); this.settings = { ...this.settings, ...s }; } } catch(e) { console.error('fetchSettings failed:', e); } },
+    async fetchDisk() { try { const r = await this._apiFetch('/api/disk'); if (r.ok) this.diskInfo = await r.json(); } catch(e) { console.error('fetchDisk failed:', e); } },
+    async fetchModels() { try { const r = await this._apiFetch('/api/models'); if (r.ok) { const d = await r.json(); if (!this.models.length) this.models = d; } } catch(e) { console.error('fetchModels failed:', e); } },
     async fetchNetwork() { try { const r = await this._apiFetch('/api/network'); if (r.ok) this.networkInfo = await r.json(); } catch(e) { this.networkInfo = {}; } },
     async fetchSystem() {
       try { const r = await this._apiFetch('/api/system'); if (r.ok) this.systemInfo = await r.json(); } catch(e) { this.systemInfo = {}; }
@@ -2482,7 +2482,7 @@ function app() {
       try {
         await this._apiFetch(`/api/merge-queue/${sessionId}/dismiss`, { method: 'POST' });
         await this.fetchMergeQueue();
-      } catch(e) {}
+      } catch(e) { console.error('dismissMergeItem failed:', e); }
     },
     async confirmAllMergeQueue() {
       try {
@@ -2614,7 +2614,7 @@ function app() {
         try {
           const r = await this._apiFetch(`/api/recordings/${f.username}/${f.filename}`, { method: 'DELETE' });
           if (r.ok) deleted++;
-        } catch(e) {}
+        } catch(e) { console.error('deleteLoop failed:', e); }
       }
       this.showToast(`已删除 ${deleted} 个文件`);
       this.fetchCleanupSuggestions();
@@ -2642,7 +2642,7 @@ function app() {
         try {
           const r = await this._apiFetch(`/api/recordings/${username}/${filename}`, { method: 'DELETE' });
           if (r.ok) deleted++;
-        } catch(e) {}
+        } catch(e) { console.error('batchDeleteLoop failed:', e); }
       }
       this.showToast(`已删除 ${deleted} 个文件`);
       this.storageSelectedFiles = [];
@@ -2671,7 +2671,7 @@ function app() {
       try {
         const r = await this._apiFetch(`/api/highlight-rules/${ruleId}`, { method: 'DELETE' });
         if (r.ok) { this.showToast('规则已删除'); await this.fetchHighlightRules(); }
-      } catch(e) {}
+      } catch(e) { console.error('deleteHighlightRule failed:', e); }
     },
     // P3: 合并节省统计
     async fetchMergeSavings() {
@@ -2959,8 +2959,9 @@ function app() {
     toggleBatchSelect(fn) { const i = this.selectedFiles.indexOf(fn); if (i >= 0) this.selectedFiles.splice(i, 1); else this.selectedFiles.push(fn); },
     async batchDelete() {
       if (!this.selectedFiles.length) return; if (!confirm(`删除选中的 ${this.selectedFiles.length} 个文件？`)) return;
-      for (const fn of this.selectedFiles) await this._apiFetch(`/api/recordings/${this.modalUsername}/${fn}`, { method: 'DELETE' });
-      this.showToast(`已删除 ${this.selectedFiles.length} 个文件`); this.selectedFiles = []; this.batchMode = false; await this.openRecordings(this.modalUsername);
+      let failures = 0;
+      for (const fn of this.selectedFiles) { const r = await this._apiFetch(`/api/recordings/${this.modalUsername}/${fn}`, { method: 'DELETE' }); if (!r.ok) failures++; }
+      if (failures) this.showToast(`${failures} 个文件删除失败`, 'error'); else this.showToast(`已删除 ${this.selectedFiles.length} 个文件`); this.selectedFiles = []; this.batchMode = false; await this.openRecordings(this.modalUsername);
     },
 
     async openRecordings(username) {
@@ -2968,7 +2969,7 @@ function app() {
       if (!this.showModal) { this.modalTab = 'files'; this.activeMerges = {}; this.excludedFiles = []; }
       this.modalLoading = true; this.showModal = true;
       try {
-        const r = await this._apiFetch(`/api/recordings/${username}`); this.modalFiles = await r.json();
+        const r = await this._apiFetch(`/api/recordings/${username}`); if (!r.ok) { this.showToast('加载录制文件失败'); this.modalLoading = false; return; } this.modalFiles = await r.json();
         this._apiFetch(`/api/stats/${username}`).then(r=>r.json()).then(d=>this.modalStats=d).catch(()=>{});
       } catch(e) { this.modalFiles = []; }
       this.modalLoading = false;
@@ -3066,13 +3067,13 @@ function app() {
             const all = d.flatMap(g => (g.highlights || []).map(h => ({...h, username: g.username})));
             this.highlightsList = all.sort((a,b) => (b.created_at||0) - (a.created_at||0));
           }
-        } catch(e) { this.highlightsList = []; }
+        } catch(e) { console.error('fetchHighlights failed:', e); this.highlightsList = []; }
       } else {
         try {
           const r = await this._apiFetch(`/api/highlights/${user}`);
           if (r.ok) this.highlightsList = await r.json();
           else this.highlightsList = [];
-        } catch(e) { this.highlightsList = []; }
+        } catch(e) { console.error('fetchHighlights failed:', e); this.highlightsList = []; }
       }
     },
     async detectHighlightsForUser() {
@@ -3110,7 +3111,7 @@ function app() {
     },
     async deleteHighlight(highlightId) {
       if (!confirm('确认删除此高光？')) return;
-      try { await this._apiFetch(`/api/highlights/item/${highlightId}`, { method: 'DELETE' }); await this.fetchHighlights(); } catch(e) {}
+      try { await this._apiFetch(`/api/highlights/item/${highlightId}`, { method: 'DELETE' }); await this.fetchHighlights(); } catch(e) { console.error('deleteHighlight failed:', e); }
     },
     playHighlight(h) {
       this.playingVideo = `/api/video/${h.username}/${h.video_file}#t=${h.start_time}`;
@@ -3136,7 +3137,7 @@ function app() {
     },
     async deleteClip(clipId) {
       if (!confirm('确认删除此片段？')) return;
-      try { await this._apiFetch(`/api/clips/item/${clipId}`, { method: 'DELETE' }); await this.fetchClips(); } catch(e) {}
+      try { await this._apiFetch(`/api/clips/item/${clipId}`, { method: 'DELETE' }); await this.fetchClips(); } catch(e) { console.error('deleteClip failed:', e); }
     },
     async openDistribute(clip) {
       this.distClip = clip;
@@ -3246,10 +3247,10 @@ function app() {
     },
 
     async startModel(username) {
-      try { await this._apiFetch(`/api/models/${username}/start`, { method: 'POST' }); } catch(e) {}
+      try { await this._apiFetch(`/api/models/${username}/start`, { method: 'POST' }); } catch(e) { console.error('startModel failed:', e); }
     },
     async stopModel(username) {
-      try { await this._apiFetch(`/api/models/${username}/stop`, { method: 'POST' }); } catch(e) {}
+      try { await this._apiFetch(`/api/models/${username}/stop`, { method: 'POST' }); } catch(e) { console.error('stopModel failed:', e); }
     },
 
     // ========== 用户认证 ==========
@@ -3265,7 +3266,7 @@ function app() {
         } else {
           localStorage.removeItem('sv_session');
         }
-      } catch(e) {}
+      } catch(e) { console.error('checkAuth failed:', e); }
     },
     async doLogin() {
       this.authError = '';
@@ -3348,6 +3349,7 @@ function app() {
       this.showToast('正在批量合并...');
       try {
         const r = await this._apiFetch('/api/sessions/merge-all-ended', { method: 'POST' });
+        if (!r.ok) { const err = await r.json().catch(()=>({})); this.showToast(err.error || '操作失败'); return; }
         const d = await r.json();
         this.showToast(`批量合并完成: ${d.merged} 个会话`);
         if (this.showModal) { await this.loadSessions(); await this.openRecordings(this.modalUsername); }
@@ -3359,9 +3361,11 @@ function app() {
       this.showToast('正在整理：合并中...');
       try {
         const r1 = await this._apiFetch('/api/sessions/merge-all-ended', { method: 'POST' });
+        if (!r1.ok) { const err = await r1.json().catch(()=>({})); this.showToast(err.error || '操作失败'); return; }
         const d1 = await r1.json();
         this.showToast(`合并完成 ${d1.merged || 0} 个会话，正在清理原文件...`);
         const r2 = await this._apiFetch('/api/recordings/cleanup-merged', { method: 'POST' });
+        if (!r2.ok) { const err = await r2.json().catch(()=>({})); this.showToast(err.error || '操作失败'); return; }
         const d2 = await r2.json();
         this.showToast(`整理完成！合并 ${d1.merged || 0} 个，清理 ${d2.deleted || 0} 个原文件`);
         this.fetchStorageBreakdown(); this.fetchDisk(); this.fetchMergeSavings();
