@@ -408,6 +408,19 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
   </button>
 </div>
 
+<!-- View Mode Toggle -->
+<div class="flex items-center justify-between mb-3" x-show="models.length > 0">
+  <span class="text-xs text-on-surface-variant" x-text="models.length + ' 个主播'"></span>
+  <div class="flex items-center bg-surface-container-high rounded-lg p-0.5">
+    <button class="px-2 py-1 rounded-md text-xs transition-all" :class="viewMode==='card'?'bg-primary text-on-primary':'text-on-surface-variant hover:text-on-surface'" @click="viewMode='card';localStorage.setItem('sv_viewMode','card')">
+      <span class="material-symbols-outlined text-sm">grid_view</span>
+    </button>
+    <button class="px-2 py-1 rounded-md text-xs transition-all" :class="viewMode==='compact'?'bg-primary text-on-primary':'text-on-surface-variant hover:text-on-surface'" @click="viewMode='compact';localStorage.setItem('sv_viewMode','compact')">
+      <span class="material-symbols-outlined text-sm">view_list</span>
+    </button>
+  </div>
+</div>
+
 <!-- Empty State -->
 <template x-if="models.length === 0">
   <div class="text-center py-24 text-on-surface-variant">
@@ -418,7 +431,7 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
 </template>
 
 <!-- Card Grid (Compact Horizontal) -->
-<div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+<div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3" x-show="viewMode==='card'">
   <template x-for="m in sortedModels" :key="m.username">
     <div class="bg-surface-container rounded-xl overflow-hidden flex flex-row group transition-all"
       :class="{
@@ -480,8 +493,8 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
         </div>
         <!-- Row 2: Platform + Viewers + Stats -->
         <div class="flex items-center gap-2 text-[11px] text-on-surface-variant mb-1.5">
-          <span class="font-medium" :style="({douyin:'color:#fe2c55',bilibili:'color:#00aeec',twitch:'color:#9146ff',youtube:'color:#ff0000',huya:'color:#f60',douyu:'color:#1ba8ff',kick:'color:#53fc18'})[m.platform]||''"
-            x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',huya:'虎牙',douyu:'斗鱼',kick:'Kick'})[m.platform]||m.platform"></span>
+          <span class="font-medium" :style="({douyin:'color:#fe2c55',bilibili:'color:#00aeec',twitch:'color:#9146ff',youtube:'color:#ff0000',huya:'color:#f60',douyu:'color:#1ba8ff',kick:'color:#53fc18',tiktok:'color:#00f2ea',afreeca:'color:#1a73e8'})[m.platform]||''"
+            x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',huya:'虎牙',douyu:'斗鱼',kick:'Kick',tiktok:'TikTok',afreeca:'AfreecaTV'})[m.platform]||m.platform"></span>
           <template x-if="m.quality && m.quality !== 'best'">
             <span class="text-primary font-bold" x-text="m.quality"></span>
           </template>
@@ -546,6 +559,63 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
             <span class="material-symbols-outlined text-base">close</span>
           </button>
         </div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<!-- Compact List View -->
+<div x-show="viewMode==='compact'" class="space-y-1">
+  <template x-for="m in sortedModels" :key="m.username">
+    <div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-surface-container hover:bg-surface-container-high transition-colors group"
+      :class="{'ring-1 ring-[#00b894]/30': m.state==='recording'}">
+      <!-- Status dot -->
+      <span class="w-2 h-2 rounded-full shrink-0" :class="{'bg-error animate-pulse':m.state==='recording','bg-[#00b894]':m.status==='public' && m.state!=='recording','bg-outline-variant/50':m.status!=='public' && m.state!=='recording'}"></span>
+      <!-- Name + Platform -->
+      <div class="flex items-center gap-2 min-w-0 flex-1">
+        <a :href="m.live_url || '#'" target="_blank" class="text-sm font-semibold truncate text-on-surface hover:text-primary transition-colors" x-text="m.username"></a>
+        <span class="text-[10px] px-1.5 py-px rounded shrink-0" :style="'background:'+(({douyin:'#fe2c5520',bilibili:'#00aeec20',twitch:'#9146ff20',youtube:'#ff000020',huya:'#f6020',douyu:'#1ba8ff20',kick:'#53fc1820',tiktok:'#00f2ea20',afreeca:'#1a73e820'})[m.platform]||'')+';color:'+(({douyin:'#fe2c55',bilibili:'#00aeec',twitch:'#9146ff',youtube:'#ff0000',huya:'#f60',douyu:'#1ba8ff',kick:'#53fc18',tiktok:'#00f2ea',afreeca:'#1a73e8'})[m.platform]||'')"
+          x-text="({douyin:'抖音',bilibili:'B站',twitch:'Twitch',youtube:'YT',huya:'虎牙',douyu:'斗鱼',kick:'Kick',tiktok:'TikTok',afreeca:'AfreecaTV'})[m.platform]||m.platform"></span>
+      </div>
+      <!-- Viewers -->
+      <span class="text-[11px] text-on-surface-variant w-16 text-right shrink-0" x-text="m.viewers > 0 ? m.viewers.toLocaleString()+' 人' : '—'"></span>
+      <!-- Recording info / Status -->
+      <div class="text-[11px] w-32 text-right shrink-0">
+        <template x-if="m.state==='recording' && m.current_recording">
+          <span class="text-on-surface"><span class="text-error font-bold mr-1">REC</span><span x-text="fmtSize(m.current_recording.file_size)"></span> · <span x-text="(m.current_recording.bandwidth_kbps||0).toFixed(0)+'k'"></span></span>
+        </template>
+        <template x-if="m.state==='recording' && !m.current_recording">
+          <span class="text-error font-bold">录制中...</span>
+        </template>
+        <template x-if="m.state==='reconnecting'">
+          <span class="text-tertiary">重连中...</span>
+        </template>
+        <template x-if="m.state==='idle' && m.status==='public'">
+          <span class="text-[#00b894]">在线</span>
+        </template>
+        <template x-if="m.state==='idle' && m.status!=='public'">
+          <span class="text-on-surface-variant" x-text="m.last_check ? ago(m.last_check) : '离线'"></span>
+        </template>
+        <template x-if="m.state==='error'">
+          <span class="text-error truncate" x-text="m.error_msg || '错误'"></span>
+        </template>
+      </div>
+      <!-- Merge status -->
+      <span class="text-[10px] w-16 text-center shrink-0" :class="{'text-tertiary':m.merge_status==='merging','text-[#00b894]':m.merge_status==='merged','text-error':m.merge_status==='failed'}" x-text="m.merge_status==='merging'?'合并中'+(m.merge_progress?Math.round(m.merge_progress*100)+'%':''):m.merge_status==='merged'?'已合并':m.merge_status==='failed'?'合并失败':''"></span>
+      <!-- Actions -->
+      <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+        <template x-if="m.state==='recording'">
+          <button class="p-1 rounded hover:bg-error/20 text-error" @click="stopModel(m.username)" title="停止"><span class="material-symbols-outlined text-sm">stop</span></button>
+        </template>
+        <template x-if="m.state==='idle'">
+          <button class="p-1 rounded hover:bg-primary/20 text-primary" @click="startModel(m.username)" title="启动"><span class="material-symbols-outlined text-sm">play_arrow</span></button>
+        </template>
+        <template x-if="m.state!=='recording' && m.state!=='idle'">
+          <button class="p-1 rounded hover:bg-surface-container-highest" @click="stopModel(m.username)" title="停止"><span class="material-symbols-outlined text-sm">stop</span></button>
+        </template>
+        <button class="p-1 rounded hover:bg-surface-container-highest" @click="openRecordings(m.username)" title="文件"><span class="material-symbols-outlined text-sm">folder</span></button>
+        <button class="p-1 rounded hover:bg-surface-container-highest" @click="openModelSettings(m.username)" title="设置"><span class="material-symbols-outlined text-sm">settings</span></button>
+        <button class="p-1 rounded hover:bg-error/20 text-error" @click="removeModel(m.username)" title="删除"><span class="material-symbols-outlined text-sm">close</span></button>
       </div>
     </div>
   </template>
@@ -957,10 +1027,10 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
     <h3 class="text-sm font-bold">平台连接状态</h3>
   </div>
   <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 p-6">
-    <template x-for="p in ['douyin','bilibili','twitch','youtube','huya','douyu','kick']" :key="p">
+    <template x-for="p in ['douyin','bilibili','twitch','youtube','huya','douyu','kick','tiktok','afreeca']" :key="p">
       <div class="bg-surface-container-low p-3 rounded-lg flex items-center gap-3">
         <span class="w-2.5 h-2.5 rounded-full" :class="models.some(m=>m.platform===p)?'bg-[#00b894]':'bg-outline-variant'"></span>
-        <span class="text-sm font-medium capitalize" x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',huya:'虎牙',douyu:'斗鱼',kick:'Kick'})[p]"></span>
+        <span class="text-sm font-medium capitalize" x-text="({douyin:'抖音 (实验性)',bilibili:'B站',twitch:'Twitch',youtube:'YouTube',huya:'虎牙',douyu:'斗鱼',kick:'Kick',tiktok:'TikTok',afreeca:'AfreecaTV'})[p]"></span>
       </div>
     </template>
   </div>
@@ -1801,6 +1871,13 @@ body[x-cloak] { visibility: hidden !important; display: block !important; }
           <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.h265_transcode?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
         </button>
       </div>
+      <!-- Preserve Original on Transcode -->
+      <div class="flex items-center justify-between">
+        <div class="max-w-[70%]"><h4 class="text-sm font-semibold">转码保留原始文件</h4><p class="text-xs text-on-surface-variant">H.265 转码后保留原始文件（重命名为 .original.mp4）</p></div>
+        <button class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="settings.preserve_original_on_transcode?'bg-primary-container':'bg-surface-container-highest'" @click="updateSetting('preserve_original_on_transcode',!settings.preserve_original_on_transcode)">
+          <span class="inline-block h-4 w-4 transform rounded-full transition-transform" :class="settings.preserve_original_on_transcode?'translate-x-6 bg-white':'translate-x-1 bg-outline'"></span>
+        </button>
+      </div>
       <!-- Merge Gap / Min Size -->
       <div class="grid grid-cols-2 gap-4">
         <div class="space-y-2">
@@ -2212,11 +2289,11 @@ function app() {
     manualClipStart: 0, manualClipEnd: 60, clipPreviewUrl: '', clipVideoDuration: 0, clipWatermark: '',
     playingVideo: null, toast: '', toastType: 'success', toastTimer: null, ticker: null,
     mergeGroups: [], mergeGap: 15, activeMerges: {}, deleteAfterMerge: false, excludedFiles: [], mergePreviewResult: null, mergePreviewLoading: false,
-    settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true, disk_warn_critical_mb: 500, disk_warn_error_mb: 5120, disk_warn_warning_mb: 10240, prevent_sleep_mode: 'recording' },
+    settings: { auto_merge: true, merge_gap_minutes: 15, auto_delete_originals: true, min_segment_size_kb: 500, smart_rename: false, h265_transcode: false, preserve_original_on_transcode: false, merge_timeout_minutes: 240, session_reuse_seconds: 30, retention_days: 0, split_by_size_mb: 0, split_by_duration_minutes: 0, post_process_script: '', filename_template: '{username}_{date}_{duration}_merged', danmaku_capture: true, highlight_auto_detect: false, highlight_keywords: ['上链接','秒杀','666','抢到了','买买买'], highlight_min_score: 0.6, highlight_min_duration: 15, highlight_max_duration: 60, highlight_padding_before: 5, highlight_padding_after: 3, clip_format: 'vertical', clip_resolution: '1080x1920', clip_watermark: '', clip_danmaku_overlay: true, disk_warn_critical_mb: 500, disk_warn_error_mb: 5120, disk_warn_warning_mb: 10240, prevent_sleep_mode: 'recording' },
     showSettings: false, diskInfo: { recordings_bytes: 0, free_bytes: 0, total_bytes: 0 }, _lastEventTs: 0,
     // 用户认证
     authRequired: false, authUser: null, authTab: 'login', authEmail: '', authPassword: '', authDisplayName: '', authError: '', authBusy: false, showUserMenu: false,
-    addingModel: false, dragOver: false, fileSort: 'time', fileSearch: '', batchMode: false, selectedFiles: [],
+    addingModel: false, viewMode: localStorage.getItem('sv_viewMode') || 'card', dragOver: false, fileSort: 'time', fileSearch: '', batchMode: false, selectedFiles: [],
     logEntries: [], modalStats: null,
     currentPage: 'streams', networkInfo: {}, systemInfo: {},
     // V2.0: 高光 + 片段
@@ -2795,7 +2872,8 @@ function app() {
           if (r.ok) { added++; const d = await r.json(); if (urls.length === 1) this.showToast(`已添加 ${d.username}`); }
           else if (urls.length === 1) {
             const err = await r.json().catch(()=>({}));
-            if (err.quota_exceeded) this.showToast('已达主播数上限，请升级套餐');
+            if (err.duplicate) this.showToast(err.error || '该直播间已添加');
+            else if (err.quota_exceeded) this.showToast('已达主播数上限，请升级套餐');
             else this.showToast('添加失败: '+(err.error||err.detail||'未知错误'));
           }
         }

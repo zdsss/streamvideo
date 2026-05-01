@@ -205,9 +205,30 @@ def detect_platform(url_or_id: str) -> tuple[str, str, str]:
         channel = m.group(1) if m else url.split("/")[-1].split("?")[0]
         return "kick", url, f"Kick_{channel}"
 
+    # TikTok
+    if "tiktok.com" in url:
+        m = re.search(r'tiktok\.com/@([^/?&#\s]+)', url)
+        if m:
+            return "tiktok", f"https://www.tiktok.com/@{m.group(1)}/live", m.group(1)
+        if "vm.tiktok.com" in url or "vt.tiktok.com" in url:
+            return "tiktok", url, f"TikTok_{url.split('/')[-1]}"
+        return "tiktok", url, "TikTok"
+
     # AfreecaTV
-    if "afreecatv.com" in url or "chzzk.naver.com" in url:
-        return "generic", url, urlparse(url).netloc.split(".")[0]
+    if "afreecatv.com" in url:
+        m = re.search(r'(?:play\.)?afreecatv\.com/([^/?&#\s]+)', url)
+        username = m.group(1) if m else url.split("/")[-1].split("?")[0]
+        return "afreeca", url, f"AfreecaTV_{username}"
+
+    # Soop (AfreecaTV global)
+    if "sooplive.co.kr" in url:
+        m = re.search(r'sooplive\.co\.kr/([^/?&#\s]+)', url)
+        username = m.group(1) if m else url.split("/")[-1].split("?")[0]
+        return "afreeca", url, f"Soop_{username}"
+
+    # Chzzk (Naver)
+    if "chzzk.naver.com" in url:
+        return "generic", url, "Chzzk"
 
     # 未知平台，尝试用 streamlink
     return "generic", url, urlparse(url).netloc.split(".")[0]

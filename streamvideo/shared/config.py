@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -78,10 +78,28 @@ class AuthConfig(_SettingsBase):
     session_ttl_hours: int = Field(default=24 * 7, description="会话有效期（小时）")
 
 
+def _detect_system_proxy() -> str:
+    """Auto-detect proxy from environment variables"""
+    for key in ("SV_PROXY", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
+        val = os.environ.get(key, "").strip()
+        if val:
+            return val
+    return ""
+
+
 class NetworkConfig(_SettingsBase):
     """网络配置"""
-    sv_proxy: str = Field(default="http://127.0.0.1:7890", description="HTTP 代理")
+    sv_proxy: str = Field(default="", description="HTTP 代理（自动检测系统代理）")
     request_timeout: int = Field(default=30, description="请求超时（秒）")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _auto_detect_proxy(cls, data: dict) -> dict:
+        if isinstance(data, dict) and not data.get("sv_proxy"):
+            detected = _detect_system_proxy()
+            if detected:
+                data["sv_proxy"] = detected
+        return data
 
 
 class RecorderConfig(_SettingsBase):
@@ -93,6 +111,8 @@ class RecorderConfig(_SettingsBase):
     merge_confidence_low: float = Field(default=0.4, description="合并信心度低阈值")
     split_size_mb: int = Field(default=2048, description="切分文件大小（MB）")
     split_duration_minutes: int = Field(default=60, description="切分时长（分钟）")
+    gpu_encoder: str = Field(default="auto", description="GPU编码器: auto/software/nvenc/videotoolbox/vaapi/qsv")
+    preserve_original_on_transcode: bool = Field(default=False, description="转码后保留原始文件（重命名为 .original.mp4）")
 
 
 class DistributionConfig(_SettingsBase):

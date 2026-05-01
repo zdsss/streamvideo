@@ -22,6 +22,7 @@ from typing import Optional
 from streamvideo.core.recorder import ModelInfo, RecorderManager, RecordingSession, RecordingState
 from streamvideo.infrastructure.database.database import Database
 from streamvideo.infrastructure.messaging.task_queue import task_queue, Priority
+from streamvideo.shared.config import _detect_system_proxy
 
 
 def _safe_username(username: str) -> bool:
@@ -66,7 +67,7 @@ logging.getLogger().addHandler(_buf_handler)
 # 配置
 BASE_DIR = Path(__file__).parent
 RECORDINGS_DIR = str(BASE_DIR / "recordings")
-PROXY = os.environ.get("SV_PROXY", "http://127.0.0.1:7890")
+PROXY = _detect_system_proxy()
 CONFIG_FILE = BASE_DIR / "config.json"
 
 # 工具版本缓存（5 分钟 TTL，避免每次 /api/system 都 fork 子进程）
@@ -82,6 +83,8 @@ DEFAULT_SETTINGS = {
     "min_segment_size_kb": 500,
     "smart_rename": False,
     "h265_transcode": False,
+    "gpu_encoder": "auto",  # auto/software/nvenc/videotoolbox/vaapi/qsv
+    "preserve_original_on_transcode": False,
     "cloud_upload": {},
     "webhooks": [],
     "merge_timeout_minutes": 240,
@@ -528,6 +531,8 @@ def apply_settings_to_recorders():
     """将全局设置应用到所有录制器"""
     manager._post_process_rename = app_settings.get("smart_rename", False)
     manager._post_process_h265 = app_settings.get("h265_transcode", False)
+    manager._gpu_encoder = app_settings.get("gpu_encoder", "auto")
+    manager._preserve_original_on_transcode = app_settings.get("preserve_original_on_transcode", False)
     manager._merge_timeout = app_settings.get("merge_timeout_minutes", 240) * 60
     manager._post_process_script = app_settings.get("post_process_script", "")
     manager._filename_template = app_settings.get("filename_template", "{username}_{date}_{duration}_merged")

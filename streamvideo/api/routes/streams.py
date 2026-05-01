@@ -39,6 +39,20 @@ async def add_model(req: AddModelRequest):
              "quota_exceeded": True, "limit": max_models},
             status_code=429,
         )
+    # Duplicate detection
+    from streamvideo.core.recorder.models import detect_platform
+    try:
+        platform, identifier, display_name = detect_platform(req.url)
+    except Exception:
+        platform, identifier, display_name = None, None, req.url
+
+    for rec in manager.recorders.values():
+        if rec.info.live_url == req.url or (identifier and rec.info.username == identifier):
+            return JSONResponse(
+                {"error": f"该直播间已添加: {display_name}", "duplicate": True},
+                status_code=409,
+            )
+
     info = manager.add_model(req.url)
     key = info.username
     await manager.start_model(key)

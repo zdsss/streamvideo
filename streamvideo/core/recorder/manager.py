@@ -19,6 +19,7 @@ logger = logging.getLogger("recorder")
 
 from streamvideo.core.recorder.models import *
 from streamvideo.core.recorder.base import BaseLiveRecorder
+from streamvideo.shared.config import _detect_system_proxy
 from streamvideo.core.recorder.uploader import CloudUploader
 from streamvideo.core.recorder.notifier import WebhookNotifier
 from streamvideo.core.recorder.engines.douyin import DouyinRecorder
@@ -28,6 +29,8 @@ from streamvideo.core.recorder.engines.youtube import YouTubeRecorder
 from streamvideo.core.recorder.engines.huya import HuyaRecorder
 from streamvideo.core.recorder.engines.douyu import DouyuRecorder
 from streamvideo.core.recorder.engines.kick import KickRecorder
+from streamvideo.core.recorder.engines.tiktok import TikTokRecorder
+from streamvideo.core.recorder.engines.afreeca import AfreecaTVRecorder
 from streamvideo.core.recorder.engines.generic import GenericRecorder
 
 PLATFORM_CLASSES = {
@@ -38,6 +41,8 @@ PLATFORM_CLASSES = {
     "huya": HuyaRecorder,
     "douyu": DouyuRecorder,
     "kick": KickRecorder,
+    "tiktok": TikTokRecorder,
+    "afreeca": AfreecaTVRecorder,
     "generic": GenericRecorder,
 }
 
@@ -50,7 +55,7 @@ class RecorderManager:
                  on_state_change: Optional[Callable] = None,
                  db=None):
         self.output_dir = output_dir
-        self.proxy = proxy or os.environ.get("SV_PROXY", "http://127.0.0.1:7890")
+        self.proxy = proxy or _detect_system_proxy()
         self.on_state_change = on_state_change
         self.db = db  # Database instance for merge history
         self.recorders: dict[str, BaseLiveRecorder] = {}
@@ -60,6 +65,9 @@ class RecorderManager:
         self._merge_gap_minutes = 15  # 合并分组时间间隔（分钟）
         self._post_process_rename = False  # 智能重命名开关
         self._post_process_h265 = False  # H.265 转码开关
+        self._gpu_encoder = "auto"  # GPU 编码器: auto/software/nvenc/videotoolbox/vaapi/qsv
+        self._detected_encoders: Optional[list[str]] = None  # 缓存检测结果
+        self._preserve_original_on_transcode = False  # 转码后保留原始文件
         self._post_process_script = ""  # 录后脚本路径
         self._filename_template = "{username}_{date}_{duration}_merged"  # 文件名模板
         self._highlight_auto_detect = False  # 合并后自动检测高光
@@ -989,6 +997,45 @@ class RecorderManager:
             if fixed_path.exists():
                 fixed_path.unlink()
 
+    async def _detect_gpu_encoders(self) -> list[str]:
+        """检测 ffmpeg 可用的硬件 H.265 编码器，结果缓存"""
+        if self._detected_encoders is not None:
+            return self._detected_encoders
+        candidates = ["hevc_nvenc", "hevc_videotoolbox", "hevc_qsv", "hevc_vaapi"]
+        found = []
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-hide_banner", "-encoders",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await proc.communicate()
+            output = stdout.decode(errors="replace")
+            for enc in candidates:
+                if enc in output:
+                    found.append(enc)
+        except Exception as e:
+            logger.warning(f"GPU encoder detection failed: {e}")
+        self._detected_encoders = found
+        if found:
+            logger.info(f"Detected GPU encoders: {found}")
+        else:
+            logger.info("No GPU encoders detected, will use software encoding")
+        return found
+
+    @staticmethod
+    def _get_encode_args(encoder: str) -> list[str]:
+        """根据编码器名称返回 ffmpeg 视频编码参数"""
+        if encoder == "hevc_nvenc":
+            return ["-c:v", "hevc_nvenc", "-cq", "28", "-preset", "medium"]
+        if encoder == "hevc_videotoolbox":
+            return ["-c:v", "hevc_videotoolbox", "-q:v", "50"]
+        if encoder == "hevc_qsv":
+            return ["-c:v", "hevc_qsv", "-global_quality", "28", "-preset", "medium"]
+        if encoder == "hevc_vaapi":
+            return ["-c:v", "hevc_vaapi", "-qp", "28"]
+        # software / fallback
+        return ["-c:v", "libx265", "-crf", "28", "-preset", "medium"]
+
     async def _post_process_transcode(self, file_path: Path, username: str, h265_override=None):
         """合并后转码为 H.265 压缩（可选，耗时较长）"""
         use_h265 = h265_override if h265_override is not None else self._post_process_h265
@@ -1006,32 +1053,59 @@ class RecorderManager:
         except Exception:
             logger.debug("suppressed exception", exc_info=True)
 
-        h265_path = file_path.with_suffix(".h265.mp4")
-        logger.info(f"[{username}] Transcoding to H.265: {file_path.name} ({file_size/1024/1024:.0f}MB)...")
+        # 解析编码器
+        gpu_setting = getattr(self, "_gpu_encoder", "auto")
+        if gpu_setting == "software":
+            encoder = "libx265"
+        elif gpu_setting == "auto":
+            detected = await self._detect_gpu_encoders()
+            encoder = detected[0] if detected else "libx265"
+        else:
+            # 用户指定了具体编码器 (nvenc/videotoolbox/vaapi/qsv)
+            encoder = f"hevc_{gpu_setting}"
 
-        try:
-            # 使用 libx265，CRF 28（较好的压缩率），保留音频
+        encode_args = self._get_encode_args(encoder)
+        audio_args = ["-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-tag:v", "hvc1"]
+
+        h265_path = file_path.with_suffix(".h265.mp4")
+        logger.info(f"[{username}] Transcoding to H.265 ({encoder}): {file_path.name} ({file_size/1024/1024:.0f}MB)...")
+
+        async def _run_ffmpeg(enc_args: list[str]) -> tuple[int, bytes]:
+            cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
+                   "-i", str(file_path)] + enc_args + audio_args + [str(h265_path)]
             proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
-                "-i", str(file_path),
-                "-c:v", "libx265", "-crf", "28", "-preset", "medium",
-                "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart",
-                "-tag:v", "hvc1",  # Apple 兼容
-                str(h265_path),
+                *cmd,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await proc.communicate()
+            _, err = await proc.communicate()
+            return proc.returncode, err
 
-            if proc.returncode == 0 and h265_path.exists() and h265_path.stat().st_size > 0:
+        try:
+            rc, stderr = await _run_ffmpeg(encode_args)
+
+            # GPU 编码失败时回退到软件编码
+            if rc != 0 and encoder != "libx265":
+                error_msg = stderr.decode()[:200] if stderr else "unknown"
+                logger.warning(f"[{username}] GPU transcode ({encoder}) failed: {error_msg}, falling back to software")
+                if h265_path.exists():
+                    h265_path.unlink()
+                encode_args = self._get_encode_args("libx265")
+                rc, stderr = await _run_ffmpeg(encode_args)
+
+            if rc == 0 and h265_path.exists() and h265_path.stat().st_size > 0:
                 new_size = h265_path.stat().st_size
                 ratio = (1 - new_size / file_size) * 100 if file_size > 0 else 0
-                file_path.unlink()
+                if getattr(self, "_preserve_original_on_transcode", False):
+                    original_path = file_path.with_suffix(".original.mp4")
+                    file_path.rename(original_path)
+                    logger.info(f"[{username}] Original preserved: {original_path.name}")
+                else:
+                    file_path.unlink()
                 h265_path.rename(file_path)
                 logger.info(f"[{username}] Transcode done: {file_size/1024/1024:.0f}MB → {new_size/1024/1024:.0f}MB ({ratio:.0f}% smaller)")
                 # Webhook 通知
                 await self.webhook.notify("merge_done", {
-                    "username": username, "message": f"H.265 转码完成，压缩 {ratio:.0f}%"})
+                    "username": username, "message": f"H.265 转码完成 ({encoder})，压缩 {ratio:.0f}%"})
             else:
                 error_msg = stderr.decode()[:200] if stderr else "unknown"
                 logger.warning(f"[{username}] Transcode failed: {error_msg}")
